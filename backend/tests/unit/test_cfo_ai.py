@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -319,6 +320,44 @@ def test_cfo_timeout_and_malformed_tool_errors_are_sanitized() -> None:
             await integration._call_tool(FailedClient(), "inspect_table_blocks", {}, tools)
         assert failure.value.category == "ValueError"
         assert marker not in str(failure.value)
+
+    asyncio.run(run())
+
+
+def test_live_table_response_without_relevance_evidence_remains_insufficient() -> None:
+    async def run() -> None:
+        integration = CfoAiIntegration(credential_store=SecureCredentialStore(MemoryCredentialBackend()))
+        integration._state = "verified"
+        integration._selected_workspace_id = "authorized-workspace"
+        client = FakeToolClient()
+        tool = SimpleNamespace(
+            name="inspect_table_blocks",
+            input_schema={
+                "type": "object",
+                "properties": {"org_id": {"type": "string"}},
+            },
+            description="Synthetic isolated test tool",
+        )
+
+        async def discover_tools(_client):
+            return {"inspect_table_blocks": tool}
+
+        @asynccontextmanager
+        async def fake_client(*, interactive):
+            assert interactive is False
+            yield client
+
+        integration._discover_tools = discover_tools
+        integration._client = fake_client
+        status = await integration.read_financial_data("inspect_table_blocks", {})
+
+        assert status["state"] == "verified"
+        assert status["financial_result"]["status"] == "insufficient_financial_data"
+        assert status["financial_result"]["result"]["structured_content"]["rows"][0]["value"] == 1000
+        assert status["selected_workspace_id"] == "authorized-workspace"
+        assert client.calls == [
+            ("inspect_table_blocks", {"org_id": "authorized-workspace"})
+        ]
 
     asyncio.run(run())
 

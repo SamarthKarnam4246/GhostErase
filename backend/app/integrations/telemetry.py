@@ -27,6 +27,7 @@ _SAFE_ATTRIBUTES = {
     "top_k",
     "model_identifier",
     "latency_ms",
+    "neatlogs.workflow.name",
     "neatlogs.span.kind",
     "neatlogs.auto_root",
     "openinference.span.kind",
@@ -45,8 +46,23 @@ _SAFE_SPAN_NAMES = {
     "deletion.metadata_clear",
     "deletion.verification_check",
     "model.completion",
+    "document-indexing",
+    "document-retrieval",
+    "deletion-verification",
+    "deletion-postcheck",
     "ghosterase",
 }
+_SAFE_WORKFLOW_NAMES = {
+    "document-indexing",
+    "document-retrieval",
+    "deletion-verification",
+    "deletion-postcheck",
+}
+
+
+def _record_instrumentation_error(error: Exception) -> None:
+    global _INITIALIZATION_ERROR
+    _INITIALIZATION_ERROR = type(error).__name__
 
 
 def _initialization_status() -> bool:
@@ -75,7 +91,7 @@ def _initialization_status() -> bool:
             neatlogs.init(
                 api_key=settings.neatlogs_api_key,
                 endpoint=settings.neatlogs_endpoint,
-                workflow_name="GhostErase",
+                workflow_name="document-lifecycle-api",
                 instrumentations=[],
                 capture_logs=False,
                 mask=redact_telemetry,
@@ -84,8 +100,26 @@ def _initialization_status() -> bool:
             _INITIALIZED = True
             _INITIALIZATION_ERROR = None
         except Exception as error:
-            _INITIALIZATION_ERROR = type(error).__name__
+            _record_instrumentation_error(error)
     return _INITIALIZED
+
+
+def initialize_telemetry() -> None:
+    """Initialize the SDK once during application startup, never per request."""
+    _initialization_status()
+
+
+def request_workflow_name(method: str, path: str) -> str | None:
+    method = method.upper()
+    if method == "POST" and path == "/api/v1/documents/upload":
+        return "document-indexing"
+    if method == "POST" and path == "/api/v1/search":
+        return "document-retrieval"
+    if method == "POST" and re.fullmatch(r"/api/v1/documents/[^/]+/delete", path):
+        return "deletion-verification"
+    if method == "POST" and re.fullmatch(r"/api/v1/documents/[^/]+/verify", path):
+        return "deletion-postcheck"
+    return None
 
 
 def _safe_value(key: str, value: Any) -> str | int | float | bool | None:
@@ -129,6 +163,8 @@ def _safe_value(key: str, value: Any) -> str | int | float | bool | None:
             } else None
         if key == "error_category":
             return value if re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", value) else None
+        if key == "neatlogs.workflow.name":
+            return value if value in _SAFE_WORKFLOW_NAMES else None
         if key == "model_identifier":
             if value == "all-MiniLM-L6-v2":
                 return value
@@ -205,8 +241,8 @@ class OperationSpan:
         try:
             for key, value in safe_attributes.items():
                 self._span.set_attribute(key, value)
-        except Exception:
-            return
+        except Exception as error:
+            _record_instrumentation_error(error)
 
     def finish(self) -> None:
         if not self._finished:
@@ -228,7 +264,7 @@ def telemetry_span(
         )
         if value is not None
     }
-    if not _initialization_status():
+    if not _INITIALIZED:
         yield OperationSpan(None, started)
         return
 
@@ -241,9 +277,10 @@ def telemetry_span(
             **safe_attributes,
         )
         span = trace_context.__enter__()
-        _INITIALIZATION_ERROR = None
+        for key, value in safe_attributes.items():
+            span.set_attribute(key, value)
     except Exception as error:
-        _INITIALIZATION_ERROR = type(error).__name__
+        _record_instrumentation_error(error)
         yield OperationSpan(None, started)
         return
 
@@ -254,15 +291,15 @@ def telemetry_span(
         operation.set_result("fail", error_category=type(error).__name__)
         try:
             trace_context.__exit__(*sys.exc_info())
-        except Exception:
-            pass
+        except Exception as telemetry_error:
+            _record_instrumentation_error(telemetry_error)
         raise
     else:
         operation.finish()
         try:
             trace_context.__exit__(None, None, None)
-        except Exception:
-            pass
+        except Exception as error:
+            _record_instrumentation_error(error)
 
 
 def neatlogs_status() -> dict[str, Any]:
@@ -276,21 +313,26 @@ def neatlogs_status() -> dict[str, Any]:
         return {
             "status": "blocked",
             "verified": False,
-            "detail": f"Neatlogs SDK initialization failed ({_INITIALIZATION_ERROR}).",
+            "detail": f"Neatlogs SDK operation failed ({_INITIALIZATION_ERROR}); trace delivery is not verified.",
         }
     return {
         "status": "unverified",
         "verified": False,
-        "detail": "SDK spans are enabled, but authenticated delivery and project trace readback have not been verified.",
+        "detail": "Neatlogs credentials are configured, but a real GhostErase workflow trace and project readback have not been verified.",
     }
 
 
 def shutdown_telemetry() -> None:
+    global _INITIALIZATION_ERROR
     if not _INITIALIZED:
         return
-    try:
-        import neatlogs
+    import neatlogs
 
+    try:
+        neatlogs.flush()
+    except Exception as error:
+        _record_instrumentation_error(error)
+    try:
         neatlogs.shutdown()
-    except Exception:
-        return
+    except Exception as error:
+        _record_instrumentation_error(error)

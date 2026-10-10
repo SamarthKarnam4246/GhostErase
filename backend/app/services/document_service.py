@@ -51,7 +51,7 @@ class DocumentService:
     def create_document(self, text: str, source: str = "upload", filename: str | None = None) -> dict[str, Any]:
         with telemetry_span(
             "document.ingestion",
-            kind="WORKFLOW",
+            kind="CHAIN",
             operation_type="document_ingestion",
         ) as span:
             result = self._create_document(text, source, filename)
@@ -210,7 +210,7 @@ class DocumentService:
     def search(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         with telemetry_span(
             "document.retrieval",
-            kind="WORKFLOW",
+            kind="CHAIN",
             operation_type="application_retrieval",
             top_k=min(max(1, limit), 20),
         ) as span:
@@ -279,7 +279,7 @@ class DocumentService:
     def delete_document(self, document_id: str, authorization_token: str | None) -> dict[str, Any]:
         with telemetry_span(
             "deletion.orchestration",
-            kind="WORKFLOW",
+            kind="CHAIN",
             document_id=document_id,
             operation_type="deletion",
         ) as span:

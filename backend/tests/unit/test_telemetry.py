@@ -97,6 +97,49 @@ def test_redactor_drops_logs_unknown_fields_and_unapproved_identifiers() -> None
     assert redact_telemetry({"signal": "log", "body": marker}) is None
 
 
+def test_redactor_keeps_only_registered_workflow_labels() -> None:
+    marker = f"workflow-marker-{uuid.uuid4().hex}"
+    approved = redact_telemetry(
+        {
+            "signal": "span",
+            "name": "document-indexing",
+            "attributes": {
+                "neatlogs.workflow.name": "document-indexing",
+                "input.value": marker,
+            },
+        }
+    )
+    rejected = redact_telemetry(
+        {
+            "signal": "span",
+            "name": "document-indexing",
+            "attributes": {"neatlogs.workflow.name": marker},
+        }
+    )
+
+    assert approved is not None
+    assert approved["attributes"] == {"neatlogs.workflow.name": "document-indexing"}
+    assert rejected is not None
+    assert rejected["attributes"] == {}
+    assert marker not in json.dumps(approved)
+    assert marker not in json.dumps(rejected)
+
+
+def test_request_workflow_names_cover_only_rag_and_deletion_entrypoints() -> None:
+    assert telemetry.request_workflow_name("POST", "/api/v1/documents/upload") == "document-indexing"
+    assert telemetry.request_workflow_name("POST", "/api/v1/search") == "document-retrieval"
+    assert (
+        telemetry.request_workflow_name("POST", f"/api/v1/documents/{uuid.uuid4()}/delete")
+        == "deletion-verification"
+    )
+    assert (
+        telemetry.request_workflow_name("POST", f"/api/v1/documents/{uuid.uuid4()}/verify")
+        == "deletion-postcheck"
+    )
+    assert telemetry.request_workflow_name("GET", "/api/v1/health") is None
+    assert telemetry.request_workflow_name("GET", f"/api/v1/documents/{uuid.uuid4()}/delete") is None
+
+
 def test_missing_neatlogs_credentials_are_explicitly_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(telemetry.settings, "neatlogs_api_key", None)
     assert telemetry._initialization_status() is False
@@ -104,6 +147,28 @@ def test_missing_neatlogs_credentials_are_explicitly_blocked(monkeypatch: pytest
     assert status["status"] == "blocked"
     assert status["verified"] is False
     assert "not configured" in status["detail"]
+
+
+def test_sdk_initializes_once_with_task_workflow_and_no_auto_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+    fake_sdk = SimpleNamespace(init=lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(telemetry.settings, "neatlogs_api_key", "synthetic-test-credential")
+    monkeypatch.setattr(telemetry.settings, "neatlogs_endpoint", "https://ingest.neatlogs.com")
+    monkeypatch.setattr(telemetry, "_INITIALIZED", False)
+    monkeypatch.setattr(telemetry, "_INITIALIZATION_ERROR", None)
+    monkeypatch.setitem(sys.modules, "neatlogs", fake_sdk)
+
+    telemetry.initialize_telemetry()
+    telemetry.initialize_telemetry()
+
+    assert len(calls) == 1
+    assert calls[0]["workflow_name"] == "document-lifecycle-api"
+    assert calls[0]["instrumentations"] == []
+    assert calls[0]["capture_logs"] is False
+    assert calls[0]["mask"] is telemetry.redact_telemetry
+    monkeypatch.setattr(telemetry, "_INITIALIZED", False)
 
 
 def test_neatlogs_initialization_failure_is_sanitized_and_visible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -145,3 +210,39 @@ def test_neatlogs_trace_start_failure_is_not_reported_as_unverified_success(
     assert "RuntimeError" in status["detail"]
     assert marker not in json.dumps(status)
     assert "synthetic-test-credential" not in json.dumps(status)
+
+
+def test_successful_later_span_does_not_hide_an_instrumentation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    class TraceContext:
+        def __enter__(self):
+            return SimpleNamespace(set_attribute=lambda *_args: None)
+
+        def __exit__(self, *_args):
+            return False
+
+    def trace(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("synthetic trace-start failure")
+        return TraceContext()
+
+    monkeypatch.setattr(telemetry.settings, "neatlogs_api_key", "synthetic-test-credential")
+    monkeypatch.setattr(telemetry.settings, "neatlogs_endpoint", "https://ingest.neatlogs.com")
+    monkeypatch.setattr(telemetry, "_INITIALIZED", True)
+    monkeypatch.setattr(telemetry, "_INITIALIZATION_ERROR", None)
+    monkeypatch.setitem(sys.modules, "neatlogs", SimpleNamespace(trace=trace))
+
+    with telemetry.telemetry_span("document-indexing", "WORKFLOW") as failed_span:
+        failed_span.set_result("pass")
+    with telemetry.telemetry_span("document-retrieval", "WORKFLOW") as successful_span:
+        successful_span.set_result("pass")
+
+    status = telemetry.neatlogs_status()
+    assert status["status"] == "blocked"
+    assert "RuntimeError" in status["detail"]
+    assert "synthetic trace-start failure" not in json.dumps(status)

@@ -11,15 +11,24 @@ from pydantic import BaseModel, Field
 
 from backend.app.core.config import settings
 from backend.app.integrations.cfo_ai import CfoAiIntegration, CfoIntegrationError
-from backend.app.integrations.telemetry import neatlogs_status, shutdown_telemetry
+from backend.app.integrations.telemetry import (
+    initialize_telemetry,
+    neatlogs_status,
+    request_workflow_name,
+    shutdown_telemetry,
+    telemetry_span,
+)
 from backend.app.services.document_service import DocumentService
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    yield
-    await cfo_ai.shutdown()
-    shutdown_telemetry()
+    initialize_telemetry()
+    try:
+        yield
+    finally:
+        await cfo_ai.shutdown()
+        shutdown_telemetry()
 
 
 app = FastAPI(title="GhostErase Backend", lifespan=lifespan)
@@ -29,6 +38,35 @@ app.add_middleware(
 )
 service = DocumentService()
 cfo_ai = CfoAiIntegration()
+
+
+@app.middleware("http")
+async def trace_application_workflows(request, call_next):
+    workflow_name = request_workflow_name(request.method, request.url.path)
+    if workflow_name is None:
+        return await call_next(request)
+
+    with telemetry_span(
+        workflow_name,
+        kind="WORKFLOW",
+        **{"neatlogs.workflow.name": workflow_name},
+    ) as span:
+        try:
+            response = await call_next(request)
+        except Exception as error:
+            span.set_result("fail", error_category=type(error).__name__)
+            raise
+        if response.status_code < 400:
+            result_status = "pass"
+        elif response.status_code in {401, 403, 409}:
+            result_status = "blocked"
+        else:
+            result_status = "fail"
+        span.set_result(
+            result_status,
+            error_category="HTTPError" if response.status_code >= 400 else None,
+        )
+        return response
 
 
 @app.middleware("http")
