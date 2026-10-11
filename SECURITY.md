@@ -24,9 +24,18 @@
 ## Network and deployment boundary
 
 - The app rejects non-loopback client addresses and untrusted `Origin` headers, applies a loopback host allowlist, and adds `nosniff`, frame denial, no-referrer, and no-store response headers.
+- There are no session cookies and no CORS grants; destructive deletion additionally requires the `X-Delete-Token` header, which browsers cannot set cross-origin. Untrusted origins are rejected on mutating routes, so a foreign site cannot drive uploads, searches, or deletions through a victim's browser.
 - Start the backend on `127.0.0.1` and use the Vite development proxy bound locally. Do not use `0.0.0.0`, a public reverse proxy/tunnel, or a shared deployment without a separately approved deployment/security plan.
 - These controls are local-MVP guardrails, not a production security assessment. The project is not production-ready; do not expose it to untrusted networks or users.
 - The app does not execute LLM-generated shell commands, SQL, infrastructure actions, or external financial writes.
 - Do not paste secret values into README files, tests, or commit messages.
 - Use the official SDK or CLI flow for each integration.
 - Treat blocked external services as blocked, not as successful integrations.
+
+## Review scope and limits (2026-10-10)
+
+This review is a code-and-test audit of the local MVP, not a penetration-test certification. Scope covered: secret handling, destructive-endpoint auth, upload validation and path safety, ORM/SQL behavior and locked-store handling, ChromaDB collection isolation and cross-document guards, loopback/origin posture and response headers, telemetry redaction, concurrent/repeated deletes, and untrusted-content rendering. These are locked by `backend/tests/unit/test_security_review.py` (no CORS middleware, loopback-only OAuth callback bind, secret-key absence across all read responses including lineage and explain payloads, security headers on data routes, frontend secret/sink scan). No external probing, fuzzing, or dependency-vulnerability scanning was performed. No physical-erasure, legal-compliance, secure-wipe, or production-security claim is made.
+
+## Before any public multi-user deployment
+
+Local-demo protections are not sufficient. Separately approved work is required: authenticated access for all read/management endpoints (dashboard, documents, reports, lineage, explain, CFO flows); rate limiting and edge request-size enforcement; disabling or gating FastAPI auto-docs; secret management beyond a local `.env`; versioned database migrations with backup/restore drills; dependency-vulnerability monitoring (note `frontend/package.json` uses semver ranges under a lockfile); and a fresh assessment of network exposure, TLS termination, and backups. Until then: bind loopback only, use synthetic data only, do not expose this service.

@@ -1,133 +1,150 @@
 # GhostErase
 
-GhostErase is a local document-indexing and deletion-orchestration prototype. Its deletion report covers configured application APIs only; it does not prove physical media erasure.
+## Product
 
-## Included foundation
+GhostErase is an AI/data privacy lifecycle assurance platform. Its initial wedge is evidence-backed privacy-action verification for RAG and AI pipelines, where source data can propagate into chunks, vectors, caches, generated text, logs, and other artifacts. The distinctive loop is known artifact lineage, fresh connector-specific verification, residual investigation, and an evidence report that states its exact scope and limits.
 
-- FastAPI backend, SQLAlchemy metadata and operation evidence store
-- Persistent ChromaDB integration using its real `DefaultEmbeddingFunction` (`all-MiniLM-L6-v2` ONNX); this local provider is not the approved hosted embedding provider required for Phase 2 completion
-- React + TypeScript UI for `.txt`/`.md` upload, retrieval, deletion, and reports
-- Versioned local documentation and environment template
-- Git ignore rules for local credentials, documents, and generated caches
+The architecture can grow to represent other data resources and privacy actions, but the local MVP executes deletion only against real implemented stores. Unknown systems are coverage gaps, not imaginary resources or successful checks. GhostErase does not claim universal discovery or erasure.
 
-## Current implementation status
+## Initial users
 
-- Upload code validates `.txt`/`.md` type, UTF-8 content, and a 5 MiB limit, writes a unique source path, chunks deterministically, and calls ChromaDB's local ONNX embedding function. The Phase 9 Playwright test in this worktree passed a fresh synthetic upload → retrieval → deletion → report → backend restart → persisted-state/control retrieval flow against isolated persistent ChromaDB and SQLite. This verifies the local ONNX path only; it does not satisfy the separately approved hosted-provider requirement.
-- Deletion requires a configured `DELETE_AUTH_TOKEN` supplied in the `X-Delete-Token` request header. Without it, deletion is blocked before an operation is created.
-- Authorized deletion persists an operation and individual timestamped checks, then removes the source file, deletes only recorded chunk IDs for the target document, queries ChromaDB for residual IDs, and runs a post-delete retrieval query. SQLite content is cleared only after all four preceding checks pass; on failure it is retained for recovery and the operation cannot pass.
-- Operation reports are assembled from persisted records and retain failed, blocked, and unverified results. `pass` requires all five configured checks to pass.
-- The legacy `src/ghosterase` synthetic-vector path remains disabled; it is not the API implementation and cannot create substitute vectors.
-- Neatlogs uses the official Python SDK with manual metadata-only spans and strict export-boundary redaction. Local SDK diagnostics and synthetic-marker exporter tests pass. The local key-authenticated Doctor probe also passed exact four-span trace readback; this verifies the SDK route for the key-selected project, not a real GhostErase workflow. The key remains only in ignored `.env`. A separate MVP-session audit reports that Claude Sonnet 4.6 and Amazon Nova Lite completion routes returned HTTP 200 through the approved gateway, while its `text-embedding-3-small` request returned HTTP 403; hosted embedding dimensions remain unverified. CFO.ai has an implemented official-MCP-SDK OAuth flow and read-only panel, but no browser consent, workspace selection, or financial-model read has yet been completed. Entire status belongs in documentation only.
+RAG engineers and privacy/security reviewers of a **local** prototype who need evidence-backed answers to "what happened to this data in the configured systems, what can be verified now, and what remains unknown?" GhostErase is a local MVP, not a production service.
 
-## Verification limits
+## What it does
 
-- Chroma's documented default embedding function can use the real `all-MiniLM-L6-v2` ONNX model. A prior local execution exercised it, but mere configuration or that separate historical test does not establish current runtime operation. The first run may download the model into Chroma's user cache; subsequent runs may reuse it.
-- **Approved-provider Phase 2 requirement remains blocked.** The approved hosted embedding route returned HTTP 403 in a separate MVP-session audit; embedding dimensions were not validated. The current local ONNX upload → persistent chunks → retrieval → backend restart gate did pass in the Phase 9 Playwright E2E, but the local ONNX function does not substitute for the approved provider.
-- Reports are limited to API-level accessibility in the configured source-file path, ChromaDB collection, normal retrieval query, and SQLite metadata. A missing search result is evidence only for that query path.
-- SSD remanence, backups, filesystem journals, and unrelated storage are not examined. Physical erasure is always reported as unverified.
-- `DELETE_AUTH_TOKEN` is unset by default. Set a local secret in `.env`; never commit it or expose it in frontend source.
-- Neatlogs status is shown from backend configuration and remains unverified until an authenticated app trace is read back from the intended project. CFO.ai runtime auth is implemented but remains unverified until a user completes browser OAuth, workspace selection, and the actual read gate. No hosted-provider calls are made until the approved gateway/model routes are configured.
-- CFO.ai panel uses the documented endpoint and official MCP SDK with authorization-code OAuth, PKCE, SDK state/issuer checks, a fixed loopback callback and Windows Credential Manager. It discovers actual tools and allows only `list_orgs`, `inspect_pages`, and `inspect_table_blocks`; no `edit_*` tool can be invoked through GhostErase. No provider credentials or financial values are stored in browser storage or source. The integration remains **unverified** until a real user authorizes, selects the intended workspace, and completes an actual read-only inspection.
-- A verified CFO.ai connection is not proof of financial impact. The UI explicitly reports **insufficient financial data** until a real table response is loaded; it does not estimate deletion costs or legal exposure.
+GhostErase tracks a document's known lineage (source file → chunks → vector records → cache entries → metadata/report rows), executes authorized deletion across its supported adapters, verifies each layer with real backend checks, and reports exactly what the evidence supports — including partial failures, residuals, and unverified layers.
 
-## Phase 7 dashboard and reporting
+## What it is not
 
-- The Overview reads document, deletion-operation, and individual-check totals from the configured SQL database. It shows persisted status breakdowns and recent operation links; values are not seeded demo figures.
-- Document management displays the generated document ID, safe filename, creation/indexing time where recorded, current indexing/deletion state, chunk count, and available verify/delete actions. Earlier database rows without a creation timestamp remain explicitly “Not recorded.”
-- Deletion reports display every recorded check, its timestamp, method, status, result, identifiers, and sanitized error when present, with storage/API scope and physical-erasure limitations. A report is not described as secure physical deletion.
-- Integration states come from Neatlogs configuration/SDK status and CFO.ai's runtime state. Neatlogs developer MCP is shown as not configured; Entire/Copilot CLI is shown as not configured for the runtime because it is development provenance, not an application service. Neither is presented as connected or verified.
-- The CFO.ai panel renders only a response from its live authenticated read-only integration. A disconnected account shows financial data as unavailable; a verified workspace without relevant table evidence shows insufficient data. No sample production figures are supplied.
+Not a universal deletion product. It does not prove secure physical erasure, SSD remanence clearing, backup/replica removal, or clearance of systems it cannot inspect. Reports say `physical_erasure_verified: false` and list what was not examined.
 
-## Local setup
+## Architecture
 
-The following commands run the implemented local application:
-1. Create and activate a virtual environment using a Python version supported by all pinned dependencies (this worktree was checked with Python 3.13.14; Python 3.12 is not installed in the current environment).
-2. Install backend dependencies:
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
-3. Install frontend dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
-4. Populate a local `.env` from `.env.example`; set `DELETE_AUTH_TOKEN` to a strong local secret. Do not check in the resulting `.env`.
-5. Start the backend:
-   ```bash
-   cd ..
-   PYTHONPATH=. python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
-   ```
-6. Start the frontend from a second terminal:
-   ```bash
-   cd frontend
-   npm run dev -- --host 127.0.0.1 --port 5173
-   ```
+Python/FastAPI backend + SQLite metadata/audit store + ChromaDB `PersistentClient` with the local `all-MiniLM-L6-v2` ONNX embedding function + React/TypeScript SPA (Vite dev proxy to the backend). Details, data flow, schema, and migration notes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Validation commands
+## Supported artifact layers
+
+| Layer | Check | Evidence |
+|---|---|---|
+| Source file | `source_file` unlink + existence re-check | Path fingerprint, before/after existence |
+| Vector records | `chromadb_api` delete (exact-ID guard) + residual `get` | Requested IDs, acknowledgement, residual ID list |
+| Application cache | `app_cache` invalidate + residual query | Invalidated keys, residual key list |
+| App retrieval | `application_retrieval` head/middle/tail probes | Matching chunk IDs, probed window count |
+| SQL metadata | `sql_metadata` clear-then-reread (gated on 5 prior passes) | Content-removed flag |
+| Advisory explanations | `POST …/explain` (optional litellm) | Suggestions only; never changes status |
+
+Explicitly **unsupported/unverified**: SSD remanence, filesystem journals, backups, replicas, provider retention, conversation memory, logs, exports, and third-party caches. Hosted embeddings remain blocked; Entire capture is not verified. A synthetic Neatlogs app trace was visible in the project dashboard, and CFO.ai read access was verified but returned no financial data. CFO.ai remains sponsor tooling, not a core product integration.
+
+## Deletion and report semantics
+
+- `blocked` — missing/invalid `DELETE_AUTH_TOKEN` (`X-Delete-Token` header); no operation created.
+- `not_verified` — unknown document, or the metadata store could not be inspected; nothing recorded.
+- `pass` — all six configured checks passed. Overall operation `pass`; document marked `deleted`.
+- `fail` — a check failed or a residual was found; SQL content retained for recovery; retry safe.
+- `blocked` (operation) — a check could not run (e.g., backend unavailable); content retained.
+- Acknowledgement ≠ verification. A missing search hit proves only that query path is blocked. Retries append new operations; earlier failures stay in history. Reports are assembled from persisted rows before they are returned.
+- `POST /documents/{id}/verify` re-queries the live backends read-only and persists a new verification record without deleting anything. A deleted document verifies as `blocked` with four passing storage checks (no content remains to probe retrieval with); re-deleting one re-serves its deletion report flagged `served_from_history`.
+
+## Local setup (macOS/Linux)
+
+Prerequisites: Python `>=3.12`, Node 18+, free loopback ports 8000/5173 (8765 for the optional CFO.ai callback).
 
 ```bash
-PYTHONPATH=. python -m pytest -q
-cd frontend
-npm run build
-npm run lint
-npx playwright install chromium
-npm run test:e2e
+python3.13 -m venv .venv 2>/dev/null || python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt   # or: uv pip install --python .venv/bin/python -r requirements.txt
+cd frontend && npm install && cd ..
+cp .env.example .env   # then set DELETE_AUTH_TOKEN to a strong local secret; never commit .env
 ```
 
-See [the Phase 9 acceptance record](docs/ACCEPTANCE.md) for PASS/BLOCKED/NOT VERIFIED status and evidence for every measurable criterion.
+`requirements.txt` installs the complete local development/test environment. `backend/pyproject.toml` declares the same runtime dependencies and provides a `test` extra for pytest and the FastAPI test client. The database uses additive schema initialization; it does not currently have versioned Alembic migrations.
 
-## Documentation and deliverables
+Run the backend (loopback only — never `0.0.0.0` without a separately approved plan):
 
-- [Architecture, data flow, SQL schema, and migration status](docs/ARCHITECTURE.md)
-- [Dependency audit and external capability evidence](docs/DEPENDENCY_AUDIT.md)
-- [Integration setup and verification steps for Neatlogs, Entire, and CFO.ai](docs/INTEGRATIONS.md)
-- [Troubleshooting and isolated test instructions](docs/TROUBLESHOOTING.md)
-- [Final feature-to-code/test/evidence report](docs/IMPLEMENTATION_REPORT.md)
-- [Measurable acceptance status for all 30 criteria](docs/ACCEPTANCE.md)
-- [Security and privacy controls](SECURITY.md)
+```bash
+PYTHONPATH=. .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
 
-The SQL schema is created at startup with SQLAlchemy metadata plus a few inline additive column upgrades. There are no versioned Alembic migration revisions in this repository; see the architecture notes before upgrading a database.
+Run the frontend from a second terminal:
 
-The deletion integration tests use unique synthetic markers and the real ChromaDB API/model, with an unrelated control document and an injected deletion failure case. They verify application retrieval before and after deletion, persisted checks, and the control document's continued availability.
+```bash
+cd frontend && npm run dev -- --host 127.0.0.1 --port 5173
+```
 
-## Phase 9 automated testing
+## Configuration
 
-- `python -m pytest -q` includes isolated `unit` tests and `integration` tests that use actual PersistentClient ChromaDB collections and isolated temporary SQLite/upload/vector directories. The Chroma tests exercise upload, application retrieval, real deletion, control-document preservation, failure injection, API status/error behavior, report serialization, and persistence after service reconstruction.
-- `cd frontend && npm run test:e2e` runs Playwright Chromium against an actual loopback Uvicorn backend and Vite frontend. It creates an isolated temporary database/upload/Chroma directory, uploads a per-run synthetic marker, retrieves it, deletes it, confirms an unrelated control remains retrievable, opens and checks the displayed persisted verification report, restarts the backend process, and confirms document/operation/check state and control retrieval persist. Test-only files are removed in `finally`; never point these tests at production data. This runs with Chroma's local ONNX embedding function and does not satisfy the separate approved hosted-provider Phase 2 gate.
-- `unit` tests using in-memory fake credential or MCP clients test parsing, schema enforcement, callback validation, sanitized failures and write-tool denial only. They are not external CFO.ai verification.
-- Neatlogs tests cover missing credentials, local export-boundary redaction, and sanitized initialization/trace-start failures with a fake SDK. The authenticated SDK Doctor probe now passes exact synthetic trace readback; a real GhostErase app trace/readback remains unverified.
-- Entire/Copilot CLI integration remains unverified: Copilot CLI 1.0.95 is installed, but Entire is not installed/on `PATH`, so no Entire enablement, authentication, status, or checkpoint readback was run. No mock checkpoint is counted.
-- CFO.ai tests use fakes only for isolated read-only policy, parsing, and error logic. No user OAuth consent or authorized workspace is present, so live authentication/read access is unverified.
-- Hosted model calls, grounded-generation summaries, and their credential/timeout/rate-limit/malformed-summary cases are not implemented in this worktree. No hosted-model failure is disguised as successful output; the active embedding path is local Chroma ONNX and remains distinct from the blocked approved hosted embedding route.
+All secrets live in the ignored local `.env` (see [.env.example](.env.example); verify with `git check-ignore -v .env` without printing contents):
 
-## Important guardrails
+| Variable | Purpose | Default |
+|---|---|---|
+| `DELETE_AUTH_TOKEN` | Deletion authorization; unset = deletion blocked | unset |
+| `DATABASE_URL` | SQLite store | `backend/data/ghosterase.sqlite3` |
+| `GHOSTERASE_UPLOAD_DIR` / `CHROMA_DIR` | Source files / vector store | `backend/data/uploads`, `backend/data/chroma` |
+| `NEATLOGS_API_KEY` / `NEATLOGS_ENDPOINT` | Optional telemetry (metadata only) | unset / `https://ingest.neatlogs.com` |
+| `LITELLM_API_KEY` / `LITELLM_API_BASE` / `LITELLM_MODEL` | Optional advisory explanations | unset / configured LiteLLM gateway / `openai/claude-haiku` |
 
-- `.env` and all local data directories are ignored by Git.
-- `.env.example` is versioned and contains variable names plus non-secret defaults/placeholders only.
-- No secrets, uploaded documents, or local database files are committed.
-- Do not report successful embedding, indexing, retrieval, or deletion verification unless the real provider and persistent ChromaDB workflow have been exercised successfully.
-- Neatlogs local diagnostics alone are not proof of remote connectivity; the authenticated Doctor probe now verifies the key-authenticated SDK write/read path. A real GhostErase trace must still be verified in the intended project. Do not put keys in frontend code or commit them.
-- Neatlogs telemetry drops logs and exports only allowlisted operational metadata. It does not capture prompts, queries, chunks, document content, model outputs, financial data, credentials, span events, or exception descriptions. Do not enable automatic instrumentation without an independent privacy review.
-- Hosted completions were verified only in a separate MVP-session audit, not from this worktree. Hosted embeddings are blocked (HTTP 403 reported for `text-embedding-3-small`), and no embedding dimensions are verified. Do not implement or claim that hosted RAG path or run its gate until the authorized embedding route works. The current direct OpenAI configuration is not the approved gateway.
-- Phase 8 local-only controls reject non-loopback clients and untrusted request origins; run the backend on `127.0.0.1`, not a public interface. Uploads receive restrictive POSIX file/directory modes where available, and Windows uses inherited local directory ACLs.
-- Uploaded text is treated as untrusted data and rendered as text. No model output or document content controls deletion status or initiates shell, SQL, infrastructure, or external write operations.
-- `.env`, integration credentials, database files, uploaded documents, Chroma data, and caches remain ignored. Verify `.env` ignore status without displaying its content using `git check-ignore -v .env`.
-- These safeguards apply to a local MVP only. GhostErase has not undergone a production security assessment and is not approved for public deployment.
+## Running tests
 
-## CFO.ai OAuth / financial panel
+```bash
+PYTHONPATH=. .venv/bin/python -m pytest -q          # 112 tests: units + real-ChromaDB/SQLite integration + failure injection
+cd frontend && npm run build && npm run lint        # tsc + Vite + oxlint
+cd frontend && npm run test:unit                    # 26 vitest component tests
+npx playwright install chromium                     # one-time browser download
+cd frontend && PYTHON="$(cd .. && pwd)/.venv/bin/python" npm run test:e2e   # 1 Chromium E2E; absolute path is needed because the backend starts from the repo root
+```
 
-- The unauthenticated MCP challenge returned HTTP 401 and a protected-resource metadata URL identifying the authorization server. This establishes only that the endpoint is protected and publishes metadata, not that GhostErase is authorized.
-- The application uses the official `mcp==2.3.0` SDK `OAuthClientProvider` with authorization-code flow, S256 PKCE, SDK state/issuer validation, and Streamable HTTP. It declares `http://127.0.0.1:8765/callback`; the callback server binds only to loopback, does not log query strings, and never returns authorization codes to the frontend. Dynamic client registration and tokens are persisted only with `keyring==25.7.0`'s Windows Credential Manager backend. The integration fails closed if a supported OS vault is unavailable.
-- Live OAuth metadata advertises the registration endpoint and S256 PKCE. The client uses SDK metadata discovery and registration instead of assuming the server accepts the fixed callback. Registration, browser approval, workspace discovery, and an authorized read have not yet been performed. Registration failures return sanitized status only; raw response bodies are withheld.
-- The financial panel only permits live-discovered `list_orgs`, `inspect_pages`, and `inspect_table_blocks` read operations. Server-side JSON Schema validation and selected-workspace injection prevent selection of any `edit_*` operation. Document text, chunks, embeddings, and deletion markers are not sent to CFO.ai.
-- Disconnect removes local client-registration and token records from the OS vault; it does not claim to revoke the CFO.ai-side OAuth grant. Revoke the app authorization in CFO.ai account settings if server-side revocation is required.
-- Connection status is verified only after authentication, live tool discovery, actual `list_orgs`, workspace selection (when needed), and a successful workspace-scoped `inspect_pages` call. A verified connection still leaves financial impact **insufficient** until actual `inspect_table_blocks` data is loaded. The panel displays server-returned data and tool provenance, but does not infer deletion cost or legal exposure.
-- The CFO.ai integration is implemented but its live completion gate remains pending because no user has completed browser authorization. No credentials were copied or requested in chat.
+Notes: tests use isolated temp directories and must never point at production data. The first Chroma run downloads the ONNX model into the local cache. E2E needs loopback ports and the backend venv. Current results: 112 + 26 + build/lint clean + 1 E2E passed (see [docs/feature-status.md](docs/feature-status.md)).
 
-## Entire / Copilot CLI provenance status
+## Synthetic demo workflow
 
-- Git 2.53.0.windows.4 and Copilot CLI 1.0.95 are available, but the Entire CLI is not installed/on `PATH`; Entire enablement, authentication, version and checkpoint readback cannot be checked.
-- Current Entire documentation lists a native Copilot CLI integration (`copilot-cli`) that writes `.github/hooks/entire.json`. That documents support for Copilot CLI, not for the VS Code Copilot extension; no VS Code capture claim is made.
-- This worktree has an ordinary Git commit but no Entire settings or checkpoint. No hook setup or synthetic checkpoint was created. Git resolves hooks to the shared `C:\Users\samar\.git\hooks` directory, so running `entire enable` here could modify hooks shared with other worktrees; setup was intentionally not attempted.
-- Entire's official storage guidance says checkpoints are stored in Git refs by default, local until pushed, and linked to a real commit. Session data may include prompts, transcripts, tool calls, token usage, and files-touched metadata. The security guide warns that redaction is not guaranteed and shadow branches can contain raw working-tree snapshots; review these storage and privacy implications before enabling capture or pushing checkpoint refs.
-- Phase 5 completion gate is **unverified / blocked**. To verify it later, install and authenticate the official CLIs, inspect the actual Entire version and `copilot-cli` agent status, review the shared-hook impact, start a Copilot CLI session from this repository, make a real development change and commit, then inspect `entire status --detailed` and `entire checkpoint list`. Do not claim Entire captures VS Code Copilot sessions unless official support is documented.
+Synthetic data only. The runnable script performs the live legs; the stale-cache leg runs as a deterministic integration test (the app exposes no test hooks to plant stale rows, by design):
+
+```bash
+bash scripts/demo.sh   # needs: curl, jq, python3, the .venv backend deps, DELETE_AUTH_TOKEN set
+```
+
+1. Starts an isolated backend (temp DB/uploads/Chroma) and uploads a document with a random per-run canary phrase.
+2. Confirms it is indexed and retrievable; confirms a cache entry exists via the lineage endpoint.
+3. Deletes with `X-Delete-Token`; asserts the report is `pass` with six passing checks.
+4. Confirms post-delete searches stay empty (cache does not resurrect content).
+5. Runs the stale-cache residual case (`test_cache_residual_is_detected_then_remediated_on_retry`): first report `fail` with `residual_cache_keys`, content retained; retry after remediation `pass`; history shows `[fail, pass]`.
+6. Restarts the backend against the same isolated dirs; asserts the report, dashboard counts, and lineage (all `deleted_verified`) persist. Cleans up temp dirs.
+
+You can repeat the same steps manually in the UI (Documents → upload/search/delete, Reports → evidence, restart backend, reload). Never paste canary values into external logs; the script keeps them in local variables only.
+
+## Troubleshooting
+
+- Backend won't start: use Python `>=3.12`; install from `requirements.txt`; bind `127.0.0.1` (remote clients are rejected by design); check the port is free.
+- Upload/search fails: only `.txt`/`.md` with text content types, valid UTF-8, non-empty, ≤ 5 MiB. First Chroma run needs network for the model artifact.
+- Deletion blocked: set `DELETE_AUTH_TOKEN` in `.env` and enter the exact value in the UI token field (memory-only); 403 means missing/mismatched token.
+- A `fail` report is evidence, not a bug: open the operation, read the failing check's method/result/error, remediate (e.g., invalidate the residual), retry — history is preserved.
+- Full table: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## Current limits
+
+- Six configured checks only; everything else is `not_examined` and reported as such.
+- `POST /documents/{id}/verify` re-runs supported checks read-only and persists a new verification operation. Historical report retrieval is separate.
+- Hosted embedding route blocked (HTTP 403 reported for `text-embedding-3-small`; dimensions unverified) — local ONNX does not substitute for it.
+- Neatlogs: a synthetic GhostErase workflow trace was verified in the project dashboard and showed metadata-only spans. Entire: no real capture is verified. CFO.ai OAuth/read was verified, but the workspace had no financial data; CFO.ai is sponsor tooling, not a customer-facing product capability. The existing runtime panel is slated for removal as the UI becomes a privacy-operations workspace.
+- No versioned DB migrations (additive `create_all`; back up `backend/data/` before upgrades). Not assessed for production; loopback + synthetic data only.
+
+## Optional development and sponsor tools (not core product features)
+
+Neatlogs is limited to privacy-filtered runtime observability. Entire is development provenance. CFO.ai is for business planning, not normal customer runtime. Their status must remain bounded to the evidence recorded in [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) and [docs/feature-status.md](docs/feature-status.md); none determines deletion status. AWS and Crustdata are not runtime dependencies.
+
+## Documentation map
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — components, flows, schema, migration, backup/recovery, AI boundary
+- [docs/feature-status.md](docs/feature-status.md) — capability matrix with code evidence + current test results
+- [docs/roadmap.md](docs/roadmap.md) — P0 → P3 phases
+- [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md) — historical acceptance record (30 criteria)
+- [docs/AUDIT_2026-10-10.md](docs/AUDIT_2026-10-10.md) — read-only audit
+- [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md), [docs/DEPENDENCY_AUDIT.md](docs/DEPENDENCY_AUDIT.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [docs/release-checklist.md](docs/release-checklist.md)
+- [SECURITY.md](SECURITY.md) — controls, review scope, pre-public requirements
+- [AGENTS.md](AGENTS.md) — contributor guidance
+
+## Guardrails
+
+- `.env`, databases, uploads, Chroma data, caches, `node_modules`, `.venv`, and test artifacts are Git-ignored; no secrets, documents, or databases are committed.
+- Never report embedding/indexing/retrieval/deletion success without exercising the real provider and persistent workflow.
+- Uploaded text is untrusted data rendered as text; no model output or document content decides deletion status or runs shell/SQL/infrastructure/external writes.
+- Local MVP safeguards only — no production security assessment, no public deployment.

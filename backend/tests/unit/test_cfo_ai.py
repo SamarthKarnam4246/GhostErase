@@ -69,7 +69,11 @@ class FakeWriter:
         return None
 
 
-def test_credentials_round_trip_through_abstract_secure_store() -> None:
+def test_credentials_round_trip_through_abstract_secure_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    # MemoryCredentialBackend declares a Windows vault module; simulate that
+    # platform so the secure-store precondition holds on any OS.
+    monkeypatch.setattr("backend.app.integrations.cfo_ai.platform.system", lambda: "Windows")
+
     async def run() -> None:
         backend = MemoryCredentialBackend()
         store = SecureCredentialStore(backend=backend)
@@ -278,7 +282,11 @@ def test_workspace_and_tool_failure_are_not_promoted_to_verified() -> None:
     asyncio.run(run())
 
 
-def test_missing_page_read_permission_does_not_verify_workspace() -> None:
+def test_missing_page_read_permission_does_not_verify_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    # MemoryCredentialBackend declares a Windows vault module; simulate that
+    # platform so the secure-store precondition holds on any OS.
+    monkeypatch.setattr("backend.app.integrations.cfo_ai.platform.system", lambda: "Windows")
+
     async def run() -> None:
         integration = CfoAiIntegration(credential_store=SecureCredentialStore(MemoryCredentialBackend()))
         await integration._select_and_verify(
@@ -324,7 +332,13 @@ def test_cfo_timeout_and_malformed_tool_errors_are_sanitized() -> None:
     asyncio.run(run())
 
 
-def test_live_table_response_without_relevance_evidence_remains_insufficient() -> None:
+def test_live_table_response_without_relevance_evidence_remains_insufficient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # MemoryCredentialBackend declares a Windows vault module; simulate that
+    # platform so the secure-store precondition holds on any OS.
+    monkeypatch.setattr("backend.app.integrations.cfo_ai.platform.system", lambda: "Windows")
+
     async def run() -> None:
         integration = CfoAiIntegration(credential_store=SecureCredentialStore(MemoryCredentialBackend()))
         integration._state = "verified"
@@ -398,3 +412,44 @@ def test_page_verification_arguments_are_derived_from_live_schema() -> None:
             )
         )
     assert missing_input.value.category == "PageInspectionNeedsInput"
+
+
+def test_session_wrapped_integration_error_maps_to_sanitized_response() -> None:
+    from fastapi import HTTPException
+
+    from backend.app.main import _cfo_integration_leaf
+
+    denied = CfoIntegrationError("integration_blocked", "Write tools are not allowed.", "ReadToolNotAllowed")
+    assert _cfo_integration_leaf(denied) is denied
+
+    wrapped = BaseExceptionGroup("session", [denied])
+    assert _cfo_integration_leaf(wrapped) is denied
+
+    nested = BaseExceptionGroup("outer", [BaseExceptionGroup("inner", [denied])])
+    assert _cfo_integration_leaf(nested) is denied
+
+    foreign = BaseExceptionGroup("session", [RuntimeError("synthetic transport failure")])
+    assert _cfo_integration_leaf(foreign) is None
+
+    invalid = CfoIntegrationError("integration_blocked", "Arguments did not match.", "InvalidToolArguments")
+    assert _cfo_integration_leaf(BaseExceptionGroup("session", [invalid])) is invalid
+
+
+def test_grouped_session_error_maps_to_sanitized_http_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from fastapi import HTTPException
+
+    from backend.app import main
+
+    async def grouped_failure(_tool_name: str, _arguments: dict):
+        raise BaseExceptionGroup(
+            "session",
+            [CfoIntegrationError("integration_blocked", "Arguments did not match.", "InvalidToolArguments")],
+        )
+
+    monkeypatch.setattr(main.cfo_ai, "read_financial_data", grouped_failure)
+    with pytest.raises(HTTPException) as response:
+        asyncio.run(main.cfo_read(main.CfoReadPayload(tool_name="inspect_table_blocks", arguments={})))
+    assert response.value.status_code == 409
+    assert response.value.detail == "Arguments did not match."

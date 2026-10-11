@@ -168,7 +168,7 @@ def _safe_value(key: str, value: Any) -> str | int | float | bool | None:
         if key == "model_identifier":
             if value == "all-MiniLM-L6-v2":
                 return value
-            return value[:128] if re.fullmatch(r"(openai|anthropic|amazon)/[A-Za-z0-9._-]{1,100}", value) else None
+            return value[:128] if re.fullmatch(r"(openai|anthropic|amazon|groq)/[A-Za-z0-9._-]{1,100}", value) else None
         if key in {"neatlogs.span.kind", "openinference.span.kind"}:
             return value if value in {"workflow", "chain", "tool", "retriever", "embedding", "llm"} else None
         return None

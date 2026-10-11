@@ -80,6 +80,12 @@ test('real browser workflow persists Chroma and deletion evidence across backend
   try {
     await waitForHttp(`${backendUrl}/api/v1/health`, backendProcess)
     await waitForHttp(`http://127.0.0.1:${frontendPort}`, frontendProcess)
+    // Hermetic precondition: the CFO OAuth grant lives in the host OS vault,
+    // outside the isolated test dirs. Clear it so the integrations assertions
+    // below hold on any machine (no-op where no grant exists; the server-side
+    // grant itself is untouched and can be re-consented).
+    const disconnectForIsolation = await page.request.delete(`${backendUrl}/api/v1/integrations/cfo`)
+    expect(disconnectForIsolation.ok()).toBeTruthy()
     await page.goto(`http://127.0.0.1:${frontendPort}`)
     await expect(page.getByRole('heading', { name: 'GhostErase' })).toBeVisible()
     await page.getByRole('button', { name: 'Documents' }).click()
@@ -135,7 +141,22 @@ test('real browser workflow persists Chroma and deletion evidence across backend
     await expect(page.locator('p').filter({ hasText: 'Physical erasure verified:' })).toContainText('No')
     await expect(page.getByText('source_file — pass', { exact: true })).toBeVisible()
     await expect(page.getByText('chromadb_api — pass', { exact: true })).toHaveCount(2)
+    await expect(page.getByText('app_cache — pass', { exact: true })).toBeVisible()
     await expect(page.getByText('application_retrieval — pass', { exact: true })).toBeVisible()
+    const lineageAfterDelete = await page.request.get(`${backendUrl}/api/v1/documents/${documentId}/lineage`)
+    expect(lineageAfterDelete.ok()).toBeTruthy()
+    const lineageAfterDeleteBody = await lineageAfterDelete.json()
+    expect(lineageAfterDeleteBody.cache_entries.length).toBeGreaterThan(0)
+    expect(lineageAfterDeleteBody.cache_entries.every(
+      (entry: { invalidated_at: string | null }) => entry.invalidated_at !== null,
+    )).toBeTruthy()
+    await page.getByRole('button', { name: 'Documents' }).click()
+    await expect(documentCard).toContainText('Latest deletion state: pass', { timeout: 45_000 })
+    await documentCard.getByRole('button', { name: 'Verify now' }).click()
+    await expect(page.getByRole('heading', { name: /^Operation / })).toBeVisible()
+    await expect(page.locator('p').filter({ hasText: 'Overall verification status:' })).toContainText('blocked')
+    await expect(page.getByText('application_retrieval — blocked', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Documents' }).click()
 
     const vectorCheck = await page.request.get(`${backendUrl}/api/v1/documents`)
     expect(vectorCheck.ok()).toBeTruthy()
@@ -144,6 +165,11 @@ test('real browser workflow persists Chroma and deletion evidence across backend
     })
     expect(deletedResponse.ok()).toBeTruthy()
     expect((await deletedResponse.json()).results.filter((hit: { document_id: string }) => hit.document_id === documentId)).toHaveLength(0)
+    const deletedAgain = await page.request.post(`${backendUrl}/api/v1/search`, {
+      data: { query: marker, limit: 10 },
+    })
+    expect(deletedAgain.ok()).toBeTruthy()
+    expect((await deletedAgain.json()).results.filter((hit: { document_id: string }) => hit.document_id === documentId)).toHaveLength(0)
     const controlAfter = await page.request.post(`${backendUrl}/api/v1/search`, {
       data: { query: controlPhrase, limit: 10 },
     })
@@ -168,7 +194,14 @@ test('real browser workflow persists Chroma and deletion evidence across backend
     const persistentData = await page.request.get(`${backendUrl}/api/v1/dashboard`)
     const dashboard = await persistentData.json()
     expect(dashboard.counts.deletion_operations).toBe(1)
-    expect(dashboard.counts.checks.pass).toBe(5)
+    expect(dashboard.counts.checks.pass).toBe(6)
+    const lineageAfterRestart = await page.request.get(`${backendUrl}/api/v1/documents/${documentId}/lineage`)
+    expect(lineageAfterRestart.ok()).toBeTruthy()
+    const lineage = await lineageAfterRestart.json()
+    expect(lineage.artifacts.length).toBeGreaterThan(0)
+    expect(new Set(lineage.artifacts.map((artifact: { status: string }) => artifact.status))).toEqual(
+      new Set(['deleted_verified']),
+    )
     const controlAfterRestart = await page.request.post(`${backendUrl}/api/v1/search`, {
       data: { query: controlPhrase, limit: 10 },
     })

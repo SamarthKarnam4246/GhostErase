@@ -7,16 +7,23 @@ dependencies = [
   "fastapi==0.115.6",
   "uvicorn==0.34.0",
   "sqlalchemy==2.0.38",
-  "alembic==1.14.1",
+  "numpy==2.2.0",
   "pydantic==2.12.5",
   "python-dotenv==1.0.1",
   "python-multipart==0.0.20",
+  "litellm==1.66.3",
   "chromadb==1.5.9",
   "neatlogs==1.4.26",
   "mcp==2.3.0",
   "keyring==25.7.0",
   "jsonschema==4.26.0",
   "httpx2==2.13.1",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest==8.3.3",
+  "httpx==0.28.1",
 ]
 
 [build-system]

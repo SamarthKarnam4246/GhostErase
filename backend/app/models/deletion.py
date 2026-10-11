@@ -12,8 +12,11 @@ class DeletionOperation(Base):
     document_id = Column(String, ForeignKey("documents.id"), nullable=False, index=True)
     chunk_ids = Column(Text, nullable=False)
     status = Column(String, nullable=False)
+    kind = Column(String, nullable=False, default="deletion")
     created_at = Column(String, nullable=False)
     completed_at = Column(String, nullable=True)
+    scope_snapshot = Column(Text, nullable=True)
+    result_snapshot = Column(Text, nullable=True)
 
 
 class DeletionCheck(Base):
