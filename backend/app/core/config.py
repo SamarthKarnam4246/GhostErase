@@ -14,6 +14,7 @@ load_dotenv(PROJECT_DIR / ".env", override=False)
 class Settings:
     app_name = "GhostErase"
     api_v1_prefix = "/api/v1"
+    demo_mode = os.getenv("GHOSTERASE_DEMO_MODE", "").strip().lower() in {"1", "true", "yes"}
     database_url = os.getenv("DATABASE_URL", f"sqlite:///{(DATA_DIR / 'ghosterase.sqlite3').as_posix()}")
     upload_dir = Path(os.getenv("GHOSTERASE_UPLOAD_DIR", str(DATA_DIR / "uploads")))
     max_upload_bytes = 5 * 1024 * 1024
@@ -23,8 +24,9 @@ class Settings:
     neatlogs_api_key = os.getenv("NEATLOGS_API_KEY")
     neatlogs_endpoint = os.getenv("NEATLOGS_ENDPOINT", "https://ingest.neatlogs.com").rstrip("/")
     litellm_api_key = os.getenv("LITELLM_API_KEY")
-    litellm_api_base = os.getenv("LITELLM_API_BASE", "https://api.openai.com/v1")
-    litellm_model = os.getenv("LITELLM_MODEL", "openai/gpt-4o-mini")
+    litellm_api_base = os.getenv("LITELLM_API_BASE", "https://litellm.vision.aivar.app/v1")
+    litellm_model = os.getenv("LITELLM_MODEL", "openai/claude-haiku")
+    groq_api_key = os.getenv("GROQ_API_KEY")
 
 
 settings = Settings()

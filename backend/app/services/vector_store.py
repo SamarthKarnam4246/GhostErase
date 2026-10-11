@@ -109,6 +109,17 @@ class ChromaVectorStore:
             )
             selected_ids = selected.get("ids", [])
             if set(selected_ids) != set(chunk_ids):
+                # Retry-safe: nothing selected and nothing remaining means a
+                # prior operation already removed these records. Report pass
+                # with evidence instead of failing the retry. A non-empty
+                # mismatch still raises so another document is never touched.
+                if not selected_ids and not self.document_chunks(document_id).get("ids"):
+                    span.set_result("pass", chunk_count=0)
+                    return {
+                        "requested_chunk_ids": [],
+                        "api_response_received": True,
+                        "already_removed": True,
+                    }
                 span.set_result("fail", error_category="ChunkSelectionMismatch")
                 raise RuntimeError("The selected chunk IDs do not exactly match the target document.")
             self.collection.delete(ids=selected_ids, where={"document_id": document_id})

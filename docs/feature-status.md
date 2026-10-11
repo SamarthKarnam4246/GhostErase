@@ -1,42 +1,48 @@
 # Feature status matrix
 
 Status labels: `VERIFIED IN CODE AND TEST` | `IMPLEMENTED BUT NOT TESTED` | `PARTIAL` | `MISSING` | `BROKEN` | `UNVERIFIED`.
-"Implemented but not tested" means: code read and verified in the 2026-10-10 audit, but **not rerun** on the audit machine (project deps and `frontend/node_modules` were absent). Historical pass claims live in [ACCEPTANCE.md](ACCEPTANCE.md) and are not current evidence. Full analysis: [AUDIT_2026-10-10.md](AUDIT_2026-10-10.md).
+Historical pass claims live in [ACCEPTANCE.md](ACCEPTANCE.md). Full analysis: [AUDIT_2026-10-10.md](AUDIT_2026-10-10.md).
+Rerun history on the macOS dev machine (venv Python 3.13.12): P3 — 43 passed + E2E 1 passed; P4 — 49 passed + E2E 1 passed; P5 — 57 passed + E2E 1 passed; P8 — 74 passed; F1–F5 review fixes — 83 passed; lifecycle/verify phase — 93 passed; stale-cache acceptance phase — 96 passed; security hardening — 100 passed; test-strategy phase — 105 passed; integrations verification — 108 passed + E2E 1 passed, `npm run build`/`npm run lint` clean; CFO session fix — 110 passed, 2 skipped; review-findings fixes (E2E vault precondition, kind label, doc corrections) — 110 passed, 2 skipped; full sweep (registry wiring, malformed cache rows, file-picker reset, disabled-button polish) — 112 passed, 2 skipped.
 
 ## Core RAG + deletion
 
 | Feature | Status | Code | Evidence / limitation |
 |---|---|---|---|
-| `.txt`/`.md` upload validation (type, UTF-8, 5 MiB, non-empty) | IMPLEMENTED BUT NOT TESTED | `backend/app/main.py:243-265` | Tests exist (`backend/tests/unit/test_verification.py`); not rerun here |
-| Deterministic chunking (1000/120) + `uuid5` chunk IDs | IMPLEMENTED BUT NOT TESTED | `backend/app/services/vector_store.py:27-49` | Deterministic, document-scoped lineage |
-| Local ONNX embed + PersistentClient index/search | IMPLEMENTED BUT NOT TESTED | `backend/app/services/vector_store.py:16-24,51-76,118-148` | Local provider only; approved hosted route BLOCKED (see [ACCEPTANCE.md](ACCEPTANCE.md) §Core) |
-| Source-file handling + traversal/symlink guards | IMPLEMENTED BUT NOT TESTED | `backend/app/services/document_service.py:42-49,339-412` | Path fingerprint is path identity, not content proof |
-| 5-check deletion orchestration (source, vector delete, residual, retrieval, SQL clear) | IMPLEMENTED BUT NOT TESTED | `backend/app/services/document_service.py:339-552` | Failure-preserving; SQL cleared only if 4 priors pass |
-| Persisted reports, honest scope (`physical_erasure_verified:false`) | IMPLEMENTED BUT NOT TESTED | `backend/app/services/document_service.py:554-629`, `frontend/src/App.tsx:368-392` | API-level accessibility only; see [ARCHITECTURE.md](ARCHITECTURE.md) |
-| `DELETE_AUTH_TOKEN` via `X-Delete-Token`, fail-closed | IMPLEMENTED BUT NOT TESTED | `backend/app/services/document_service.py:293-302`, `backend/app/core/config.py:20` | Unset by default; constant-time compare |
-| Dashboard aggregates from persisted rows | IMPLEMENTED BUT NOT TESTED | `backend/app/services/document_service.py:161-208` | No seeded figures |
-| SQL content clearing | PARTIAL | `backend/app/services/document_service.py:498-507` | Content emptied + re-read, but filename/hash/chunk IDs/path retained — "cleared", not "nullified" |
-| Retrieval-after-delete probe | PARTIAL | `backend/app/services/document_service.py:457-470` | Queries only first 1000 chars; tail-chunk coverage relies on residual check |
-| `POST /verify` re-verification | MISSING | `backend/app/services/document_service.py:631-650` | Returns latest persisted report; executes no fresh checks. Frontend wrapper `frontend/src/api/client.ts:91-93` is dead (never imported in `App.tsx`) |
-| Persistent cache layer + stale-cache demo | MISSING | — | No cache tables/service in code |
-| Cross-provider lifecycle registry | MISSING | — | Only documents/ops/checks tracked; backups, replicas, memory, logs, exports listed as `not_examined` |
-| AI investigation agent | MISSING | — | Deferred by plan decision; Neatlogs/CFO correctly decide nothing |
+| `.txt`/`.md` upload validation (type, UTF-8, 5 MiB, non-empty) | VERIFIED IN CODE AND TEST | `backend/app/main.py:upload_document`, `backend/tests/unit/test_verification.py` | Invalid-type/UTF-8/oversize cases covered |
+| Deterministic chunking (1000/120) + `uuid5` chunk IDs | VERIFIED IN CODE AND TEST | `backend/app/services/vector_store.py:chunk_text`, `_chunk_id` | Deterministic, document-scoped lineage |
+| Local ONNX embed + PersistentClient index/search | VERIFIED IN CODE AND TEST | `backend/app/services/vector_store.py` | Local provider only; approved hosted route BLOCKED (see [ACCEPTANCE.md](ACCEPTANCE.md) §Core) |
+| Source-file handling + traversal/symlink guards | VERIFIED IN CODE AND TEST | `DocumentService._safe_filename`, `_delete_document` source stage | Path fingerprint is path identity, not content proof |
+| 6-check deletion orchestration (source, vector delete, residual, cache, retrieval, SQL clear) | VERIFIED IN CODE AND TEST | `DocumentService._delete_document` | Failure-preserving; SQL cleared only if 5 priors pass; `pass` needs all 6 |
+| Persisted reports, honest scope (`physical_erasure_verified:false`) | VERIFIED IN CODE AND TEST | `DocumentService.deletion_report`, `frontend/src/App.tsx` reports screen | API-level accessibility only; see [ARCHITECTURE.md](ARCHITECTURE.md) |
+| `DELETE_AUTH_TOKEN` via `X-Delete-Token`, fail-closed | VERIFIED IN CODE AND TEST | `DocumentService._delete_document` auth gate | Unset by default; constant-time compare; rejected before operation creation |
+| Dashboard aggregates from persisted rows | VERIFIED IN CODE AND TEST | `DocumentService.dashboard_data` | No seeded figures |
+| App lineage registry (`derived_artifacts`: source/chunk/cache/sql pointers) | VERIFIED IN CODE AND TEST | `backend/app/models/lineage.py`, `DocumentService._ensure_lineage`, `backend/tests/unit/test_lineage_cache.py` | Current-state pointers with stable IDs; evidence stays in append-only checks. In-app artifacts only |
+| Application-owned demo cache + adapter (`app_cache` check) | VERIFIED IN CODE AND TEST | `backend/app/services/cache_store.py`, `backend/app/services/adapters.py`, `backend/tests/unit/test_lineage_cache.py` | Query hashes + result IDs only, never raw text. Stale entries fail verification; third-party caches stay unverified |
+| Lineage detail API (`GET /documents/{id}/lineage`) | VERIFIED IN CODE AND TEST | `DocumentService.document_detail`, `backend/app/main.py:document_lineage` | Read-only; artifacts + cache entries + unknown-copies note; 404 for unknown IDs |
+| Security-product UI (badges, lineage view, derived indicators, advisory panel) | VERIFIED IN CODE AND TEST | `frontend/src/App.tsx`, `frontend/src/components/Status.tsx`, `frontend/src/App.css` | 19 vitest component tests + E2E green; statuses always text-labeled; global live region; responsive + focus-visible; no mock values in production paths |
+| Vector retry-safety (`already_removed` evidence) | VERIFIED IN CODE AND TEST | `ChromaVectorStore.delete_chunks` | Empty-selection + empty-residuals reports pass; non-empty mismatch still raises so other documents are never touched |
+| SQL content clearing | PARTIAL | `DocumentService` metadata stage | Content emptied + re-read, but filename/hash/chunk IDs/path retained — "cleared", not "nullified". Write failures roll back and record `blocked` |
+| Retrieval-after-delete probe | PARTIAL | `DocumentService._retrieval_probe_windows` | Head/middle/tail probes (`probed_window_count` in evidence); still query-path evidence only |
+| `POST /verify` fresh verification | VERIFIED IN CODE AND TEST | `DocumentService._verify_current_state`, `backend/tests/unit/test_verify_fresh.py` | Re-queries all supported backends read-only; persists `kind='verification'` ops; never mutates artifacts; retrieval probe inapplicable without retained content (→ `blocked`); unknown docs `not_verified` with no op. Re-delete re-serves history flagged `served_from_history` |
+| Cross-provider/external lifecycle (backups, replicas, memory, logs, exports) | MISSING | — | Listed as `not_examined`; no imaginary connectors built |
+| AI investigation assistant (advisory only) | VERIFIED IN CODE AND TEST | `backend/app/services/explainer.py`, `POST .../explain`, `backend/tests/unit/test_explainer.py`, reports-screen advisory panel | Live `ok` verified via gateway `openai/claude-haiku` mapping (fenced-JSON tolerated); provider credentials selected by model prefix, fail-closed; groq blocked (no usable model for supplied key); unsafe steps dropped; status invariant tested; privacy-minimized evidence only |
 | Legacy `src/ghosterase` vector path | BROKEN (disabled by design) | `src/ghosterase/service.py`, `src/ghosterase/vectorstore.py` | Always `BLOCKED`; must not substitute for real path |
 
 ## Integrations
 
 | Feature | Status | Code | Evidence / limitation |
 |---|---|---|---|
-| Neatlogs metadata-only telemetry + redaction | IMPLEMENTED BUT NOT TESTED | `backend/app/integrations/telemetry.py`, `backend/app/integrations/neatlogs.py` | Real app-trace readback UNVERIFIED; Doctor probe is SDK-only evidence |
-| CFO.ai MCP OAuth read-only + vault fail-closed | IMPLEMENTED BUT NOT TESTED | `backend/app/integrations/cfo_ai.py`, `backend/app/main.py:202-240` | No live consent/workspace/read completed; allowlist `list_orgs`/`inspect_pages`/`inspect_table_blocks` |
+| Neatlogs metadata-only telemetry + redaction | VERIFIED IN CODE AND TEST | `backend/app/integrations/telemetry.py` | Unit/redaction tests pass; live app trace renders exact span tree in project dashboard with empty span I/O and no document text in tree/timeline/graph views; Doctor probe is SDK-only evidence |
+| CFO.ai MCP OAuth read-only + vault fail-closed | VERIFIED IN CODE AND TEST | `backend/app/integrations/cfo_ai.py` | Live verified 2026-10-11: browser consent, dynamic registration, workspace `Yashas CFOAI` (103178), `inspect_pages` read, vault persistence across restart. Workspace empty → financial impact `insufficient_financial_data` by rule. Refreshed-session schema errors are unwrapped to mapped 4xx with sanitized detail (unit-tested; live re-proof in that exact session state still needs restart + re-consent) |
 | Approved hosted embeddings | BLOCKED | `backend/app/services/vector_store.py` | Separate audit reported HTTP 403 for `text-embedding-3-small`; dimensions unverified |
 | Entire / Copilot CLI capture | BLOCKED | docs only | CLI not installed/on PATH; see [INTEGRATIONS.md](INTEGRATIONS.md) |
 
-## Test / build reruns
+## Test / build reruns (current)
 
-| Command | Status on audit machine | Note |
+| Command | Result | Note |
 |---|---|---|
-| `PYTHONPATH=. python -m pytest -q` | UNVERIFIED (not runnable) | 5 collection errors: `fastapi`/`sqlalchemy`/`chromadb`/`dotenv`/`neatlogs` absent; system Python 3.9.6 < required `>=3.12` |
-| `npm run build` / `npm run lint` | UNVERIFIED (not runnable) | `frontend/node_modules` absent |
-| `npm run test:e2e` | UNVERIFIED (not runnable) | Requires install + Chromium + backend deps |
-| `git diff --check` | Pass | Ran clean during audit |
+| `PYTHONPATH=. .venv/bin/python -m pytest -q` | 112 passed, 2 skipped | Python 3.13.12 venv; third-party warnings only (anyio/litellm/pydantic deprecations, none from repo code). Adds registry-wiring + malformed-cache-row units |
+| `cd frontend && npm run build && npm run lint` | Pass / 0 warnings, 0 errors | `tsc -b` + Vite + oxlint |
+| `cd frontend && npm run test:unit` | 26 passed | vitest + jsdom + testing-library; badges, indicators, limitation texts, theme/progress/failure-guidance/freshness/unsupported-label/file-picker-reset states |
+| `PYTHON=.venv/bin/python npm run test:e2e` | 1 passed | `PYTHON` env required: bare `python` is not on PATH here. Covers upload → retrieval → delete → pass → cache non-resurrection → restart persistence (report, dashboard, lineage). The stale-cache residual leg runs at integration level (failure injection; no prod test hooks) |
+| `git diff --check` | Pass | |

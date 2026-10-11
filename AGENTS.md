@@ -4,18 +4,18 @@ Durable instructions for coding sessions. Derived from the read-only audit (`doc
 
 ## 1. What GhostErase is
 
-Security and data-governance product for RAG applications. It tracks a document's known data lineage, executes authorized deletion/invalidation against supported storage layers, independently verifies each operation with recorded evidence, and reports precisely what the evidence supports. Differentiator: lifecycle tracking + evidence-backed verification. It is not a file manager or a "Deleted" button.
+GhostErase is an AI/data privacy lifecycle assurance platform. Its initial product wedge is evidence-backed privacy-action verification for RAG and AI pipelines: track known source-to-derived-artifact lineage, execute authorized actions only through implemented connectors, independently verify current state, investigate residuals, and report the exact scope, evidence, freshness, and gaps. It is not a universal discovery or erasure product.
 
-Source of truth for product rules: the project briefing; truthfulness rules: never confuse requested / acknowledged / retrieval-blocked / storage-verified / unverified / residual-detected. See `docs/AUDIT_2026-10-10.md` §5.
+The broad data model and future workflow may support multiple privacy actions, but the local MVP executes only deletion against real supported stores. Unknown systems remain coverage gaps; acknowledgements, retrieval blocking, and missing search results are not physical-erasure proof. Follow `docs/ARCHITECTURE.md` and `docs/roadmap.md`; never conflate requested / acknowledged / retrieval-blocked / storage-verified / unverified / residual-detected.
 
 ## 2. Verified architecture (do not assume beyond this)
 
 - Backend: Python + FastAPI, entry `backend/app/main.py` (`app`, `service = DocumentService()`, `cfo_ai = CfoAiIntegration()`). Loopback-only + Origin allowlist + security headers (`main.py:72-103`).
-- Services: `backend/app/services/document_service.py` (`DocumentService`: ingest, search filter, 5-check deletion orchestration, report assembly, dashboard aggregates); `backend/app/services/vector_store.py` (`ChromaVectorStore`: `PersistentClient`, `DefaultEmbeddingFunction` = `all-MiniLM-L6-v2` ONNX, deterministic `chunk_text` 1000/120 and `uuid5` chunk IDs).
-- Persistence: SQLite via `backend/app/db/session.py` (`create_all` + inline additive `ALTER TABLE`, **no Alembic revisions**); tables `documents`, `deletion_operations`, `deletion_checks` (`backend/app/models/`). Defaults: `backend/data/ghosterase.sqlite3`, `backend/data/uploads`, `backend/data/chroma` (`backend/app/core/config.py:14-22`). E2E/tests override to temp dirs.
-- Auth: `DELETE_AUTH_TOKEN` env (unset by default) vs `X-Delete-Token` header, `secrets.compare_digest` (`document_service.py:293-302`); blocked before operation creation.
-- Frontend: React + TS, `frontend/src/App.tsx` screens `overview|documents|reports|integrations`, API wrapper `frontend/src/api/client.ts`, types `frontend/src/types.ts`, Vite `/api` proxy to `127.0.0.1:8000`.
-- Integrations: Neatlogs metadata-only spans with export allowlist (`backend/app/integrations/telemetry.py`); CFO.ai MCP OAuth read-only allowlist + OS-vault fail-closed (`backend/app/integrations/cfo_ai.py`). Neither decides deletion status. No cache layer, no lifecycle registry beyond documents/ops/checks, no AI agent exist yet.
+- Services: `backend/app/services/document_service.py` (`DocumentService`: ingest, search filter, 6-check deletion orchestration, report assembly, dashboard aggregates, advisory explanations); `backend/app/services/vector_store.py` (`ChromaVectorStore`: `PersistentClient`, `DefaultEmbeddingFunction` = `all-MiniLM-L6-v2` ONNX, deterministic `chunk_text` 1000/120 and `uuid5` chunk IDs); `backend/app/services/cache_store.py` (`AppCache`: SQLite-backed per-query cache, IDs only); `backend/app/services/adapters.py` (`DeletionAdapter` interface; only `app_cache` registered); `backend/app/services/explainer.py` (optional advisory explainer, never authoritative).
+- Persistence: SQLite via `backend/app/db/session.py` (`create_all` + inline additive `ALTER TABLE`, **no Alembic revisions**); tables `documents`, `deletion_operations`, `deletion_checks`, `derived_artifacts`, `cache_entries` (`backend/app/models/`). Defaults: `backend/data/ghosterase.sqlite3`, `backend/data/uploads`, `backend/data/chroma` (`backend/app/core/config.py`). E2E/tests override to temp dirs.
+- Auth: `DELETE_AUTH_TOKEN` env (unset by default) vs `X-Delete-Token` header, `secrets.compare_digest` (`document_service.py` auth gate at the top of `_delete_document`); blocked before operation creation.
+- Frontend: React + TS, `frontend/src/App.tsx` screens `overview|documents|reports|integrations` (badges, lineage detail view, derived retrieval/storage indicators, advisory panel), `frontend/src/components/Status.tsx`, API wrapper `frontend/src/api/client.ts`, types `frontend/src/types.ts`, Vite `/api` proxy to `127.0.0.1:8000`.
+- Integrations: Neatlogs metadata-only spans with export allowlist (`backend/app/integrations/telemetry.py`); CFO.ai MCP OAuth read-only allowlist + OS-vault fail-closed (`backend/app/integrations/cfo_ai.py`). Neither decides deletion status. CFO.ai is sponsor/business-planning tooling, not a normal customer feature; the existing runtime panel is legacy scope to remove in the frontend-workspace phase. No connectors exist for backups, replicas, provider retention, conversation memory, logs, exports, third-party caches, or vector-store vendors — all stay unverified.
 - Legacy `src/ghosterase/` is disabled-by-design (`BLOCKED`); never re-enable as a substitute vector path.
 - Full data flow, schema, and migration notes: `docs/ARCHITECTURE.md`. Acceptance record: `docs/ACCEPTANCE.md`. Audit: `docs/AUDIT_2026-10-10.md`. Status matrix: `docs/feature-status.md`. Phases: `docs/roadmap.md`.
 
@@ -23,7 +23,7 @@ Note: this repo uses UPPERCASE doc names (`ARCHITECTURE.md`, not `architecture.m
 
 ## 3. Commands that really work
 
-These are the documented commands, copied from `README.md` (Local setup + Validation). Rerun status on the audit machine: **not yet rerunnable** — project Python deps and `frontend/node_modules` were absent, `.env` and `backend/data/` absent (see audit §8). P0 is to rerun them and record actuals.
+These are the documented commands, copied from `README.md` (Local setup + Validation). Rerun status: green on the macOS dev machine (venv Python 3.13.12) — see `docs/feature-status.md` for current counts. P0 baseline is established; keep rerunning every phase.
 
 ```bash
 python -m pip install -r requirements.txt
@@ -39,7 +39,7 @@ cd frontend && npm run build && npm run lint
 npx playwright install chromium && npm run test:e2e
 ```
 
-Rules: Python `>=3.12` (per `backend/pyproject.toml`); backend binds `127.0.0.1` only; tests use isolated temp dirs — never point them at production data; first Chroma ONNX run may download the model. Known drift: `requirements.txt` vs `backend/pyproject.toml` differ (`alembic` vs `numpy/pytest/httpx/litellm`, `httpx` vs `httpx2`) — reconcile in P0, don't paper over it.
+Rules: Python `>=3.12` (per `backend/pyproject.toml`); backend binds `127.0.0.1` only; tests use isolated temp dirs — never point them at production data; first Chroma ONNX run may download the model. `requirements.txt` is the complete local-dev environment; `backend/pyproject.toml` declares runtime dependencies plus an equivalent `test` extra. This project uses additive SQLite schema initialization, not Alembic migrations.
 
 ## 4. Security rules (from `SECURITY.md`, binding)
 
@@ -54,7 +54,7 @@ Rules: Python `>=3.12` (per `backend/pyproject.toml`); backend binds `127.0.0.1`
 
 - Smallest coherent diffs; follow existing patterns (`DocumentService`, `ChromaVectorStore`, `_record_check` evidence shape); no rewrites or formatting churn.
 - Typed signatures, Pydantic validation at API boundary, `limit` bounds enforced.
-- Every deletion-related outcome persisted with timestamp, method, identifiers, result, sanitized error. Partial failure is first-class; SQL content retained unless all prior checks pass.
+- Every deletion-related outcome persisted with timestamp, method, identifiers, result, sanitized error. Partial failure is first-class; SQL content retained unless all five prior checks pass.
 - No real component replaced with mock/fake/in-memory/hard-coded success to make builds pass. Unsupported layers report `unsupported`/`unverified`.
 - No success, integration, deployment, or security guarantee claimed without executed evidence.
 
@@ -62,8 +62,10 @@ Rules: Python `>=3.12` (per `backend/pyproject.toml`); backend binds `127.0.0.1`
 
 - `pytest.ini` markers: `unit` (isolated; fakes are not integration proof), `integration` (real local PersistentClient/SQLite), `external` (authorized service only, never mocked).
 - Cover failure paths as seriously as happy paths (auth rejection, Chroma failure injection, oversized/invalid uploads, residual detection, control preservation, restart persistence).
-- Historical counts (39 pytest + 1 E2E) are not current evidence — rerun and record exact commands + outputs every phase.
+- Historical counts (39 pytest + 1 E2E) are not current evidence — rerun and record exact commands + outputs every phase. Current counts live in `docs/feature-status.md`.
 - Frontend: `tsc -b` via `npm run build`, `oxlint` via `npm run lint`, Playwright E2E on isolated dirs with cleanup.
+- No CI workflow exists in this repo (no `.github/` convention) — run the gates locally per phase instead; do not add one without an explicit request.
+- All tests are local and deterministic (synthetic markers, isolated temp dirs, suite-owned ONNX model cache). Nothing requires credentials or external network; the only skipped tests are the two credential-gated live-Neatlogs protocol tests, each marked skipped with its prerequisite instead of reported passed.
 
 ## 7. Phase discipline
 

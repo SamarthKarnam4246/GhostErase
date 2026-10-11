@@ -1,8 +1,10 @@
 import type {
+  AIExplanation,
   CreateDocumentResponse,
   CfoConnectResponse,
   CfoStatus,
   DashboardResponse,
+  DocumentDetail,
   DocumentSummary,
   HealthResponse,
   SearchResult,
@@ -29,6 +31,10 @@ export async function dashboardData(): Promise<DashboardResponse> {
 
 export async function deletionReport(operationId: string): Promise<VerificationResponse> {
   return readResponse(await fetch(`${BASE_URL}/deletion-operations/${operationId}`))
+}
+
+export async function explainReport(operationId: string): Promise<AIExplanation> {
+  return readResponse(await fetch(`${BASE_URL}/deletion-operations/${operationId}/explain`, { method: 'POST' }))
 }
 
 export async function cfoStatus(): Promise<CfoStatus> {
@@ -70,6 +76,10 @@ export async function uploadDocument(file: File): Promise<CreateDocumentResponse
 
 export async function listDocuments(): Promise<DocumentSummary[]> {
   return readResponse(await fetch(`${BASE_URL}/documents`))
+}
+
+export async function documentDetail(documentId: string): Promise<DocumentDetail> {
+  return readResponse(await fetch(`${BASE_URL}/documents/${documentId}/lineage`))
 }
 
 export async function searchDocuments(query: string): Promise<SearchResult[]> {

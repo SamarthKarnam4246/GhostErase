@@ -125,6 +125,7 @@ def health() -> dict:
         "vector_store": "ChromaDB PersistentClient",
         "embedding_provider": "ChromaDB DefaultEmbeddingFunction (all-MiniLM-L6-v2 ONNX)",
         "deletion_authorization_configured": bool(settings.delete_auth_token),
+        "guided_demo_enabled": settings.demo_mode,
         "neatlogs": neatlogs_status(),
     }
 
@@ -199,6 +200,27 @@ async def cfo_status() -> dict:
     return await cfo_ai.status()
 
 
+def _cfo_error_leaves(error: BaseException):
+    if isinstance(error, BaseExceptionGroup):
+        for sub_error in error.exceptions:
+            yield from _cfo_error_leaves(sub_error)
+    else:
+        yield error
+
+
+def _cfo_integration_leaf(error: BaseException) -> CfoIntegrationError | None:
+    """Find our sanitized error inside async-session exception groups.
+
+    Errors raised while a live MCP client session is open can arrive wrapped
+    (anyio task machinery), bypassing `except CfoIntegrationError`. Unwrap
+    single or nested groups; anything else re-raises untouched.
+    """
+    for leaf in _cfo_error_leaves(error):
+        if isinstance(leaf, CfoIntegrationError):
+            return leaf
+    return None
+
+
 @app.post("/api/v1/integrations/cfo/connect")
 async def cfo_connect() -> dict:
     try:
@@ -218,6 +240,12 @@ async def cfo_select_workspace(payload: CfoWorkspacePayload) -> dict:
     except CfoIntegrationError as error:
         status_code = 400 if error.category in {"UnknownWorkspace", "WorkspaceSelectionUnavailable"} else 503
         raise HTTPException(status_code=status_code, detail=error.public_detail) from error
+    except BaseExceptionGroup as error:
+        leaf = _cfo_integration_leaf(error)
+        if leaf is None:
+            raise
+        status_code = 400 if leaf.category in {"UnknownWorkspace", "WorkspaceSelectionUnavailable"} else 503
+        raise HTTPException(status_code=status_code, detail=leaf.public_detail) from error
 
 
 @app.post("/api/v1/integrations/cfo/read")
@@ -227,6 +255,12 @@ async def cfo_read(payload: CfoReadPayload) -> dict:
     except CfoIntegrationError as error:
         status_code = 403 if error.category == "ReadToolNotAllowed" else 409
         raise HTTPException(status_code=status_code, detail=error.public_detail) from error
+    except BaseExceptionGroup as error:
+        leaf = _cfo_integration_leaf(error)
+        if leaf is None:
+            raise
+        status_code = 403 if leaf.category == "ReadToolNotAllowed" else 409
+        raise HTTPException(status_code=status_code, detail=leaf.public_detail) from error
 
 
 @app.delete("/api/v1/integrations/cfo")
@@ -278,9 +312,52 @@ def verify_document(document_id: str) -> dict:
     return service.verify_document(document_id)
 
 
+@app.post("/api/v1/demo/runs")
+def start_guided_demo(x_delete_token: str | None = Header(default=None)) -> dict:
+    if not settings.demo_mode:
+        raise HTTPException(status_code=404, detail="Guided demo mode is disabled.")
+    try:
+        return service.start_guided_demo(x_delete_token)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="The synthetic guided demo could not complete its retrieval and residual-detection setup.",
+        ) from error
+
+
+@app.post("/api/v1/demo/runs/{operation_id}/remediate")
+def remediate_guided_demo(
+    operation_id: str,
+    x_delete_token: str | None = Header(default=None),
+) -> dict:
+    if not settings.demo_mode:
+        raise HTTPException(status_code=404, detail="Guided demo mode is disabled.")
+    try:
+        return service.remediate_guided_demo(operation_id, x_delete_token)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="The authorized synthetic-demo remediation could not be completed.",
+        ) from error
+
+
 @app.get("/api/v1/documents")
 def list_documents() -> list[dict]:
     return service.list_documents()
+
+
+@app.get("/api/v1/documents/{document_id}/lineage")
+def document_lineage(document_id: str) -> dict:
+    detail = service.document_detail(document_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return detail
 
 
 @app.get("/api/v1/deletion-operations")
@@ -304,3 +381,12 @@ def deletion_report(operation_id: str) -> dict:
     if report is None:
         raise HTTPException(status_code=404, detail="Deletion operation not found.")
     return report
+
+
+@app.post("/api/v1/deletion-operations/{operation_id}/explain")
+def explain_deletion_report(operation_id: str) -> dict:
+    """Advisory AI explanation. Never changes the verified report status."""
+    explanation = service.explain_operation(operation_id)
+    if explanation is None:
+        raise HTTPException(status_code=404, detail="Deletion operation not found.")
+    return explanation

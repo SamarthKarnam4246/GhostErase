@@ -133,6 +133,8 @@ export interface VerificationResponse {
   document_id: string
   chunk_ids: string[]
   status: ServiceState
+  kind: string
+  served_from_history: boolean
   created_at: string
   completed_at: string | null
   checks: DeletionCheck[]
@@ -144,6 +146,53 @@ export interface VerificationResponse {
     storage_paths_checked?: Record<string, unknown>
     conclusion?: string
   }
+}
+
+export interface AISuggestedStep {
+  action: string
+  detail: string
+  check_id?: string
+}
+
+export interface AIExplanation {
+  operation_id: string
+  verified_status: string
+  advisory_only: boolean
+  note: string
+  evidence_check_ids: string[]
+  outcome: 'ok' | 'degraded' | 'unavailable'
+  provider: { name: string } | null
+  summary: string | null
+  likely_causes: string[]
+  suggested_steps: AISuggestedStep[]
+  dropped_unsafe_steps: number
+  detail: string | null
+}
+
+export interface LineageArtifact {
+  artifact_id: string
+  artifact_type: string
+  backend: string
+  identifier: string
+  parent_id: string | null
+  status: string
+  created_at: string
+  updated_at: string
+}
+
+export interface LineageCacheEntry {
+  cache_key: string
+  query_hash: string
+  result_count: number
+  created_at: string
+  invalidated_at: string | null
+}
+
+export interface DocumentDetail {
+  document: DocumentSummary
+  artifacts: LineageArtifact[]
+  cache_entries: LineageCacheEntry[]
+  lineage_note: string
 }
 
 export interface SearchResult {

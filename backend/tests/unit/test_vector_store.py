@@ -68,6 +68,10 @@ def test_application_retrieval_filters_unknown_document_and_chunk_ids() -> None:
     known_id = str(uuid.uuid4())
     service = DocumentService.__new__(DocumentService)
     service.vector_store = MockVectorStore()
+    from types import SimpleNamespace
+
+    # Empty cache: exercise the live-query filtering path below.
+    service.cache = SimpleNamespace(get=lambda _query: [], put=lambda _query, _hits: [])
 
     class FakeSession:
         def __enter__(self):
@@ -92,3 +96,36 @@ def test_application_retrieval_filters_unknown_document_and_chunk_ids() -> None:
     service.session_factory = FakeSession
     hits = service._search("query", 5)
     assert [hit["chunk_id"] for hit in hits] == ["known-chunk"]
+
+
+def test_overall_gate_requires_all_checks_and_never_passes_on_unrun() -> None:
+    derive = DocumentService._derive_overall
+    assert derive({"pass"}, 1, 1) == "pass"
+    assert derive({"pass"}, 6, 6) == "pass"
+    assert derive({"pass", "blocked"}, 6, 6) == "blocked"
+    assert derive({"pass", "fail"}, 6, 6) == "fail"
+    assert derive({"pass"}, 6, 5) == "blocked"
+    assert derive(set(), 6, 0) == "blocked"
+    assert derive({"not_verified"}, 1, 1) == "blocked"
+
+
+def test_safe_error_hides_content_and_credentials() -> None:
+    marker = f"secret-{uuid.uuid4().hex}"
+    try:
+        raise RuntimeError(f"failure with {marker} and token hunter2")
+    except RuntimeError as error:
+        sanitized = DocumentService._safe_error(error)
+    assert marker not in sanitized
+    assert "hunter2" not in sanitized
+    assert "RuntimeError" in sanitized
+
+
+def test_retrieval_probe_windows_cover_head_middle_and_tail() -> None:
+    long_text = " ".join(f"token-{index}" for index in range(500))
+    assert len(long_text) > 2500
+    windows = DocumentService._retrieval_probe_windows(long_text)
+    assert len(windows) == 3
+    assert windows[0] == long_text[:1000]
+    assert windows[2] == long_text[-1000:]
+    assert DocumentService._retrieval_probe_windows("short") == ["short"]
+    assert len(DocumentService._retrieval_probe_windows("   ")) == 1

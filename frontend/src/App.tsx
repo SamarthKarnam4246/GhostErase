@@ -7,21 +7,46 @@ import {
   dashboardData,
   deletionReport,
   disconnectCfo,
+  documentDetail,
+  explainReport,
   healthCheck,
   listDocuments,
   readCfoFinancialData,
   searchDocuments,
   selectCfoWorkspace,
   uploadDocument,
+  verifyDocument,
 } from './api/client'
 import type {
+  AIExplanation,
   CfoStatus,
   DashboardResponse,
+  DocumentDetail,
   DocumentSummary,
   HealthResponse,
   SearchResult,
   VerificationResponse,
 } from './types'
+import { checkLimitation } from './checks'
+import { ReportIndicators, StatusBadge } from './components/Status'
+
+function readThemePreference(): 'dark' | 'light' {
+  try {
+    const saved = window.localStorage.getItem('ghosterase-theme')
+    if (saved === 'light' || saved === 'dark') return saved
+  } catch {
+    return 'dark'
+  }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+function storeThemePreference(theme: 'dark' | 'light'): void {
+  try {
+    window.localStorage.setItem('ghosterase-theme', theme)
+  } catch {
+    /* Storage may reject writes; the theme still applies for this session. */
+  }
+}
 
 function App() {
   const [screen, setScreen] = useState<'overview' | 'documents' | 'reports' | 'integrations'>('overview')
@@ -33,12 +58,17 @@ function App() {
   const [cfoArguments, setCfoArguments] = useState('{}')
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [file, setFile] = useState<File | null>(null)
+  const [uploadKey, setUploadKey] = useState(0)
   const [deleteToken, setDeleteToken] = useState('')
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [report, setReport] = useState<VerificationResponse | null>(null)
+  const [explanation, setExplanation] = useState<AIExplanation | null>(null)
+  const [details, setDetails] = useState<Record<string, DocumentDetail | undefined>>({})
+  const [detailPending, setDetailPending] = useState<string | null>(null)
   const [message, setMessage] = useState('Loading the local service status…')
   const [busy, setBusy] = useState(false)
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => readThemePreference())
   const financialReadTool = cfo?.read_tools.find((tool) => tool.name === 'inspect_table_blocks')
 
   const refresh = async () => {
@@ -62,6 +92,11 @@ function App() {
   }, [])
   /* oxlint-enable react/set-state-in-effect */
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    storeThemePreference(theme)
+  }, [theme])
+
   const upload = async () => {
     if (!file) {
       setMessage('Choose a .txt or .md file first.')
@@ -72,6 +107,8 @@ function App() {
       const created = await uploadDocument(file)
       setMessage(`Indexed ${created.filename} as ${created.id} (${created.chunk_ids.length} chunks).`)
       setFile(null)
+      // Reset the file input so re-selecting the same file fires onChange.
+      setUploadKey((previous) => previous + 1)
       await refresh()
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Upload failed.')
@@ -103,6 +140,11 @@ function App() {
     try {
       const completed = await deleteDocument(document.id, deleteToken)
       setReport(completed)
+      setExplanation(null)
+      // Drop pre-delete search hits and lineage snapshots so stale content
+      // and artifact states never linger after verification runs.
+      setResults([])
+      setDetails({})
       setMessage(`Deletion operation ${completed.operation_id}: ${completed.status}.`)
       await refresh()
     } catch (error) {
@@ -205,16 +247,70 @@ function App() {
     }
   }
 
+  const verifyNow = async (documentId: string) => {
+    setBusy(true)
+    try {
+      const fresh = await verifyDocument(documentId)
+      setReport(fresh)
+      setExplanation(null)
+      setScreen('reports')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Verification failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const openReport = async (operationId: string) => {
     setBusy(true)
     try {
       setReport(await deletionReport(operationId))
+      setExplanation(null)
       setScreen('reports')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not load the deletion report.')
     } finally {
       setBusy(false)
     }
+  }
+
+  const explain = async (operationId: string) => {
+    setBusy(true)
+    try {
+      setExplanation(await explainReport(operationId))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Explanation unavailable.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const toggleDetails = async (documentId: string) => {
+    if (details[documentId]) {
+      setDetails((previous) => {
+        const next = { ...previous }
+        delete next[documentId]
+        return next
+      })
+      return
+    }
+    setDetailPending(documentId)
+    try {
+      const detail = await documentDetail(documentId)
+      setDetails((previous) => ({ ...previous, [documentId]: detail }))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not load lineage details.')
+    } finally {
+      setDetailPending(null)
+    }
+  }
+
+  const deleteActionLabel = (document: DocumentSummary): string => {
+    if (document.status === 'deleted') return 'Deleted'
+    if (document.latest_deletion_status === 'fail' || document.latest_deletion_status === 'blocked') {
+      return 'Retry deletion and verify'
+    }
+    return 'Delete and verify'
   }
 
   const formatTimestamp = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded'
@@ -227,13 +323,18 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" aria-busy={busy}>
       <header className="topbar">
         <div>
           <p className="eyebrow">Deterministic deletion orchestration</p>
           <h1>GhostErase</h1>
         </div>
-        <span className="subtle">Application and API-level evidence only</span>
+        <div className="topbar-side">
+          <span className="subtle">Application and API-level evidence only</span>
+          <button type="button" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          </button>
+        </div>
       </header>
 
       <nav className="screen-nav" aria-label="Dashboard screens">
@@ -249,6 +350,13 @@ function App() {
           </button>
         ))}
       </nav>
+
+      <div className="status-message" role="status">{message}</div>
+      {busy ? (
+        <p className="working" role="status">
+          <span className="working-dot" aria-hidden="true" />Working…
+        </p>
+      ) : null}
 
       {screen === 'overview' ? (
         <>
@@ -271,7 +379,7 @@ function App() {
             <div className="integration-grid">
               {Object.entries(dashboard?.integrations ?? {}).map(([key, integration]) => (
                 <article className="result-panel" key={key}>
-                  <strong>{integrationLabels[key] ?? key}</strong>
+                  <strong>{integrationLabels[key] ?? key}</strong> <StatusBadge state={integration.state} />
                   <p className={`integration-state state-${integration.state}`}>{integration.state.replaceAll('_', ' ')}</p>
                 </article>
               ))}
@@ -281,7 +389,7 @@ function App() {
             <h2>Recent deletion operations</h2>
             {dashboard?.recent_operations.length ? dashboard.recent_operations.slice(0, 10).map((operation) => (
               <article className="result-panel" key={operation.operation_id}>
-                <strong>{operation.document_name} — {operation.status}</strong>
+                <strong>{operation.document_name} — {operation.status}</strong> <StatusBadge state={operation.status} />
                 <p>Started {formatTimestamp(operation.created_at)} · Document {operation.document_id}</p>
                 <code>{operation.operation_id}</code>
                 <button type="button" disabled={busy} onClick={() => void openReport(operation.operation_id)}>Open verification report</button>
@@ -305,12 +413,13 @@ function App() {
         <label>
           .txt or .md file
           <input
+            key={`upload-${uploadKey}`}
             type="file"
             accept=".txt,.md,text/plain,text/markdown"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
         </label>
-        <button type="button" disabled={busy || !file} onClick={() => void upload()}>Upload and index</button>
+        <button type="button" className="button-primary" disabled={busy || !file} onClick={() => void upload()}>Upload and index</button>
       </section>
 
       <section className="panel">
@@ -332,20 +441,77 @@ function App() {
 
       <section className="panel">
         <h2>Indexed documents</h2>
+        <p>“Delete and verify” asks for confirmation first. “Verify now” runs fresh read-only checks and saves a new verification record; viewing a report never changes data.</p>
         <label>
           Deletion authorization token
-          <input type="password" autoComplete="off" value={deleteToken} onChange={(event) => setDeleteToken(event.target.value)} />
+          <span className="field-hint" id="delete-token-hint">Held in memory only, never stored. Without it the backend rejects deletion (403).</span>
+          <input type="password" autoComplete="off" aria-describedby="delete-token-hint" value={deleteToken} onChange={(event) => setDeleteToken(event.target.value)} />
         </label>
         {documents.length === 0 ? <p>No indexed documents.</p> : documents.map((document) => (
           <article className="result-panel" key={document.id}>
-            <strong>{document.filename} — {document.status}</strong>
+            <strong className="filename">{document.filename} — {document.status}</strong> <StatusBadge state={document.status} />
             <p>Created/indexed: {formatTimestamp(document.created_at)} · {document.chunk_count} chunks · SHA-256 {document.content_hash}</p>
             <p>Latest deletion state: {document.latest_deletion_status ?? 'No deletion operation'}</p>
             <code>{document.id}</code>
             <div className="document-actions">
               <button type="button" disabled={busy || !document.latest_deletion_operation_id} onClick={() => document.latest_deletion_operation_id && void openReport(document.latest_deletion_operation_id)}>View latest report</button>
-              <button type="button" disabled={busy || document.status === 'deleted'} onClick={() => void remove(document)}>Delete and verify</button>
+              <button
+                type="button"
+                aria-expanded={details[document.id] !== undefined}
+                aria-controls={`lineage-${document.id}`}
+                disabled={busy || detailPending === document.id}
+                onClick={() => void toggleDetails(document.id)}
+              >
+                {details[document.id] ? 'Hide details & lineage' : 'Details & lineage'}
+              </button>
+              <button type="button" className="button-primary" disabled={busy || document.status === 'deleted'} onClick={() => void remove(document)}>{deleteActionLabel(document)}</button>
+              <button type="button" disabled={busy} onClick={() => void verifyNow(document.id)}>Verify now</button>
             </div>
+            {detailPending === document.id ? <p>Loading lineage…</p> : null}
+            {details[document.id] ? (
+              <div id={`lineage-${document.id}`}>
+                <h3>Known lineage</h3>
+                <div className="table-scroll">
+                  <table className="detail-table">
+                    <thead>
+                      <tr><th scope="col">Artifact</th><th scope="col">Backend</th><th scope="col">Identifier</th><th scope="col">Status</th><th scope="col">Updated</th></tr>
+                    </thead>
+                    <tbody>
+                      {details[document.id]?.artifacts.map((artifact) => (
+                        <tr key={artifact.artifact_id}>
+                          <td>{artifact.artifact_type}</td>
+                          <td>{artifact.backend}</td>
+                          <td><code>{artifact.identifier}</code></td>
+                          <td><StatusBadge state={artifact.status} /></td>
+                          <td>{formatTimestamp(artifact.updated_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <h3>Cached copies ({details[document.id]?.cache_entries.length ?? 0})</h3>
+                {details[document.id]?.cache_entries.length ? (
+                  <div className="table-scroll">
+                    <table className="detail-table">
+                      <thead>
+                        <tr><th scope="col">Cache key</th><th scope="col">Results</th><th scope="col">Status</th></tr>
+                      </thead>
+                      <tbody>
+                        {details[document.id]?.cache_entries.map((entry) => (
+                          <tr key={entry.cache_key}>
+                            <td><code>{entry.cache_key}</code></td>
+                            <td>{entry.result_count} chunk{entry.result_count === 1 ? '' : 's'}</td>
+                            <td><StatusBadge state={entry.invalidated_at ? 'deleted' : 'indexed'} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : <p>No cached copies tracked for this document.</p>}
+                <h3>Unknown external copies</h3>
+                <p>{details[document.id]?.lineage_note}</p>
+              </div>
+            ) : null}
           </article>
         ))}
       </section>
@@ -368,25 +534,50 @@ function App() {
           {report ? (
             <section className="panel">
               <h2>Operation {report.operation_id}</h2>
-              <p><strong>Overall verification status:</strong> {report.status}</p>
+              <p><strong>Overall verification status:</strong> {report.status} <StatusBadge state={report.status} /></p>
+              <p><strong>Run type:</strong> {report.kind === 'verification' ? 'Fresh verification' : report.kind === 'deletion' ? 'Deletion' : report.kind}</p>
               <p><strong>Requested document:</strong> {report.document_id}</p>
               <p><strong>Started:</strong> {formatTimestamp(report.created_at)} · <strong>Completed:</strong> {formatTimestamp(report.completed_at)}</p>
+              {report.served_from_history ? <p>Served from history — no new backend checks ran for this response. Use “Verify now” for fresh checks.</p> : null}
+              <ReportIndicators report={report} />
+              <h3>Checks</h3>
               {report.checks.map((check) => (
                 <article className="result-panel" key={check.check_id}>
-                  <strong>{check.layer} — {check.status}</strong>
+                  <strong>{check.layer} — {check.status}</strong> <StatusBadge state={check.status} />
                   <p>Checked {formatTimestamp(check.checked_at)} · Method: {check.method}</p>
+                  <p className="limitation">Limitation: {checkLimitation(check.layer, check.method)}</p>
                   <p>Document {check.document_id} · {check.chunk_ids.length} recorded chunk IDs</p>
                   <pre>{JSON.stringify(check.actual_result, null, 2)}</pre>
                   {check.error_detail ? <p className="error-detail">Error: {check.error_detail}</p> : null}
                 </article>
               ))}
+              {report.status !== 'pass' ? (
+                <>
+                  <h3>What to do next</h3>
+                  <p>Open the failing or blocked check above and note its method and error. Remediate that layer — for example, invalidate a residual cache entry — then retry deletion or run fresh verification. Earlier failures stay in the history.</p>
+                </>
+              ) : null}
               <h3>Scope and limitations</h3>
               <p>{report.scope.conclusion ?? 'Conclusions are limited to the recorded configured API checks.'}</p>
               <p><strong>API-level accessibility only:</strong> {report.scope.api_level_accessibility_only ? 'Yes' : 'No'}</p>
               <p><strong>Physical erasure verified:</strong> {report.scope.physical_erasure_verified ? 'Yes' : 'No'}</p>
               {report.scope.storage_paths_checked ? <pre>{JSON.stringify(report.scope.storage_paths_checked, null, 2)}</pre> : null}
               <p>Not examined: {report.scope.not_examined.join(', ') || 'None listed'}</p>
-              <p role="status">{message}</p>
+              <h3>AI investigation (advisory only)</h3>
+              <p>Suggestions only — the verified status above governs and is never changed by model output.</p>
+              <button type="button" disabled={busy} onClick={() => void explain(report.operation_id)}>Explain this report</button>
+              {explanation ? (
+                <article className="result-panel">
+                  <p><strong>Advisory outcome:</strong> {explanation.outcome}</p>
+                  {explanation.summary ? <p>{explanation.summary}</p> : null}
+                  {explanation.likely_causes.map((cause) => <p key={cause}>{cause}</p>)}
+                  {explanation.suggested_steps.map((step) => (
+                    <p key={`${step.action}-${step.detail}`}>{step.action}: {step.detail}{step.check_id ? ` (evidence ${step.check_id})` : ''}</p>
+                  ))}
+                  {explanation.detail ? <p>{explanation.detail}</p> : null}
+                  <p>Evidence checks: {explanation.evidence_check_ids.join(', ') || 'none'}</p>
+                </article>
+              ) : null}
             </section>
           ) : <section className="panel"><p>Select an operation to view its verification report.</p></section>}
         </>
@@ -399,7 +590,7 @@ function App() {
             <div className="integration-grid">
               {Object.entries(dashboard?.integrations ?? {}).map(([key, integration]) => (
                 <article className="result-panel" key={key}>
-                  <strong>{integrationLabels[key] ?? key}</strong>
+                  <strong>{integrationLabels[key] ?? key}</strong> <StatusBadge state={integration.state} />
                   <p className={`integration-state state-${integration.state}`}>{integration.state.replaceAll('_', ' ')}</p>
                   <p>{integration.detail}</p>
                   <p>Verified: {integration.verified ? 'Yes' : 'No'}</p>
